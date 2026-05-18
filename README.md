@@ -31,10 +31,13 @@ python scripts/merge_leaderboards.py --input-glob "outputs/optimization/stage_*.
 El archivo clave de cada run es `summary.json`:
 
 - `best`: mejor candidata encontrada.
-- `rows`: candidatas evaluadas.
+- `rows` / `candidates_evaluated`: candidatas evaluadas.
 - `accepted`: candidatas que pasan filtros survival.
+- `rejection_counts`: motivos de rechazo agrupados.
+- `robust_passes` / `robust_total`: cuantos filtros pasa la mejor candidata.
 
 Los datos de mercado se descargan dentro de GitHub Actions en cada run. No se suben datos privados al repo. La descarga intenta Stooq primero y usa Yahoo Finance como respaldo publico si Stooq pide apikey.
+Cuando usa Yahoo, los precios de SPY se ajustan por dividendos para que el historico largo no quede castigado artificialmente.
 
 ## Formato de datos
 

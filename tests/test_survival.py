@@ -56,9 +56,28 @@ def test_survival_rejects_excessive_train_calmar() -> None:
         "trades_per_year": 20.0,
         "long_fraction": 0.5,
         "validation_negative_years": 0,
+        "feature_count": 2,
     }
 
     assert criteria.rejection_reason(row) == "train_calmar_too_high"
+
+
+def test_survival_counts_passed_robust_filters() -> None:
+    criteria = SurvivalCriteria()
+    row = {
+        "train_calmar": 1.5,
+        "validation_calmar": 1.4,
+        "train_cagr": 0.08,
+        "validation_cagr": 0.07,
+        "train_mdd": -0.2,
+        "validation_mdd": -0.2,
+        "trades_per_year": 20.0,
+        "long_fraction": 0.5,
+        "validation_negative_years": 0,
+        "feature_count": 2,
+    }
+
+    assert criteria.pass_count(row) == len(criteria.checks(row))
 
 
 def test_build_survival_grid_splits_across_stages() -> None:
@@ -73,7 +92,7 @@ def test_build_survival_grid_splits_across_stages() -> None:
 def test_build_survival_grid_can_search_multiple_rule_families() -> None:
     grid = build_survival_grid(
         {
-            "rule": ["ma_crossover", "rsi_reversion", "mean_reversion"],
+            "rule": ["ma_crossover", "rsi_reversion", "mean_reversion", "linear_score"],
             "fast_window": [2],
             "slow_window": [5],
             "rsi_window": [2],
@@ -82,6 +101,10 @@ def test_build_survival_grid_can_search_multiple_rule_families() -> None:
             "reversion_window": [10],
             "entry_zscore": [1.0],
             "exit_zscore": [0.0],
+            "fast_return_window": [5],
+            "slow_return_window": [60],
+            "risk_window": [20],
+            "score_threshold": [0.0],
         },
         stage=0,
         total_stages=1,
@@ -91,6 +114,7 @@ def test_build_survival_grid_can_search_multiple_rule_families() -> None:
         "ma_crossover",
         "rsi_reversion",
         "mean_reversion",
+        "linear_score",
     }
 
 
@@ -106,6 +130,7 @@ def test_evaluate_survival_candidate_reports_locked_closed() -> None:
     assert row["locked_opened"] is False
     assert "train_calmar" in row
     assert "validation_calmar" in row
+    assert "robust_passes" in row
 
 
 def test_evaluate_survival_candidate_supports_non_ma_rules() -> None:
@@ -118,6 +143,25 @@ def test_evaluate_survival_candidate_supports_non_ma_rules() -> None:
     )
 
     assert row["candidate_id"].startswith("rsi_buy_30")
+    assert row["locked_opened"] is False
+
+
+def test_evaluate_survival_candidate_supports_linear_score_rule() -> None:
+    row = evaluate_survival_candidate(
+        sample_daily_data(),
+        {
+            "rule": "linear_score",
+            "fast_return_window": 5,
+            "slow_return_window": 60,
+            "risk_window": 20,
+            "score_threshold": 0.0,
+        },
+        initial_cash=10_000,
+        commission_bps=0,
+        slippage_bps=0,
+    )
+
+    assert row["feature_count"] == 4
     assert row["locked_opened"] is False
 
 

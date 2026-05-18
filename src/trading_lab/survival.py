@@ -30,6 +30,7 @@ class SurvivalCriteria:
     min_long_fraction: float = 0.25
     max_long_fraction: float = 0.75
     max_validation_negative_years: int = 0
+    max_features_per_candidate: int = 5
 
     def rejection_reason(self, row: dict[str, Any]) -> str | None:
         train_calmar = float(row["train_calmar"])
@@ -62,7 +63,33 @@ class SurvivalCriteria:
             return "too_much_long"
         if int(row["validation_negative_years"]) > self.max_validation_negative_years:
             return "validation_negative_years"
+        if int(row["feature_count"]) > self.max_features_per_candidate:
+            return "too_many_features"
         return None
+
+    def pass_count(self, row: dict[str, Any]) -> int:
+        return sum(1 for passed in self.checks(row).values() if passed)
+
+    def checks(self, row: dict[str, Any]) -> dict[str, bool]:
+        train_calmar = float(row["train_calmar"])
+        validation_calmar = float(row["validation_calmar"])
+        ratio_ok = validation_calmar != 0 and train_calmar / validation_calmar <= self.max_train_validation_ratio
+        return {
+            "train_calmar_min": train_calmar >= self.min_train_calmar,
+            "validation_calmar_min": validation_calmar >= self.min_validation_calmar,
+            "train_calmar_max": train_calmar <= self.max_train_calmar,
+            "train_validation_ratio": ratio_ok,
+            "train_cagr": float(row["train_cagr"]) >= self.min_train_cagr,
+            "validation_cagr": float(row["validation_cagr"]) >= self.min_validation_cagr,
+            "train_mdd": abs(float(row["train_mdd"])) <= self.max_train_mdd,
+            "validation_mdd": abs(float(row["validation_mdd"])) <= self.max_validation_mdd,
+            "trades_per_year_min": float(row["trades_per_year"]) >= self.min_trades_per_year,
+            "trades_per_year_max": float(row["trades_per_year"]) <= self.max_trades_per_year,
+            "long_fraction_min": float(row["long_fraction"]) >= self.min_long_fraction,
+            "long_fraction_max": float(row["long_fraction"]) <= self.max_long_fraction,
+            "validation_negative_years": int(row["validation_negative_years"]) <= self.max_validation_negative_years,
+            "feature_count": int(row["feature_count"]) <= self.max_features_per_candidate,
+        }
 
 
 def split_train_validation(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -111,6 +138,7 @@ def _rule_parameter_names(rule: str, parameter_space: dict[str, list[Any]]) -> l
         "rsi_reversion": ["rsi_window", "rsi_buy", "rsi_sell"],
         "breakout": ["breakout_window", "exit_window"],
         "volatility_momentum": ["momentum_window", "volatility_window", "volatility_quantile"],
+        "linear_score": ["fast_return_window", "slow_return_window", "risk_window", "score_threshold"],
     }[rule]
     return [name for name in rule_names if name in parameter_space]
 
@@ -145,18 +173,46 @@ def evaluate_survival_candidate(
         "validation_negative_years": _negative_year_count(validation_result.equity_curve),
         "locked_opened": False,
     }
-    row["survival_score"] = survival_score(row)
+    checks = criteria.checks(row)
+    row["robust_passes"] = criteria.pass_count(row)
+    row["robust_total"] = len(checks)
     row["rejection_reason"] = criteria.rejection_reason(row)
     row["accepted"] = row["rejection_reason"] is None
+    row["survival_score"] = survival_score(row)
     return row
 
 
 def survival_score(row: dict[str, Any]) -> float:
     validation_calmar = float(row.get("validation_calmar", 0.0) or 0.0)
     train_calmar = float(row.get("train_calmar", 0.0) or 0.0)
+    train_cagr = float(row.get("train_cagr", 0.0) or 0.0)
+    validation_cagr = float(row.get("validation_cagr", 0.0) or 0.0)
+    train_mdd = abs(float(row.get("train_mdd", 0.0) or 0.0))
+    validation_mdd = abs(float(row.get("validation_mdd", 0.0) or 0.0))
+    trades_per_year = float(row.get("trades_per_year", 0.0) or 0.0)
+    long_fraction = float(row.get("long_fraction", 0.0) or 0.0)
+    robust_passes = int(row.get("robust_passes", 0) or 0)
     gap = max(0.0, train_calmar - 2.0 * max(validation_calmar, 0.0))
     complexity = max(0, int(row.get("feature_count", 1)) - 2) * 0.15
-    return float(validation_calmar - 0.35 * gap - complexity)
+    train_too_high = max(0.0, train_calmar - 8.0)
+    trade_penalty = max(0.0, 12.0 - trades_per_year) * 0.08 + max(0.0, trades_per_year - 90.0) * 0.02
+    long_penalty = max(0.0, 0.25 - long_fraction) * 4.0 + max(0.0, long_fraction - 0.75) * 4.0
+    drawdown_penalty = max(0.0, train_mdd - 0.30) * 3.0 + max(0.0, validation_mdd - 0.30) * 3.0
+    negative_year_penalty = int(row.get("validation_negative_years", 0) or 0) * 0.8
+    return float(
+        robust_passes * 10.0
+        + validation_calmar
+        + 0.25 * train_calmar
+        + validation_cagr
+        + 0.5 * train_cagr
+        - 0.35 * gap
+        - complexity
+        - train_too_high
+        - trade_penalty
+        - long_penalty
+        - drawdown_penalty
+        - negative_year_penalty
+    )
 
 
 def _run_candidate(
@@ -219,6 +275,14 @@ def _signals_for_rule(data: pd.DataFrame, params: dict[str, Any]) -> pd.Series:
             momentum_window=int(params["momentum_window"]),
             volatility_window=int(params["volatility_window"]),
             volatility_quantile=float(params["volatility_quantile"]),
+        )
+    if rule == "linear_score":
+        return _linear_score_signals(
+            data,
+            fast_return_window=int(params["fast_return_window"]),
+            slow_return_window=int(params["slow_return_window"]),
+            risk_window=int(params["risk_window"]),
+            score_threshold=float(params["score_threshold"]),
         )
     raise ValueError(f"unsupported survival rule: {rule}")
 
@@ -319,6 +383,36 @@ def _volatility_momentum_signals(
     signal = ((momentum > 0) & (volatility < volatility_limit)).astype(int)
     signal[momentum.isna() | volatility.isna() | volatility_limit.isna()] = 0
     return signal
+
+
+def _linear_score_signals(
+    data: pd.DataFrame,
+    *,
+    fast_return_window: int,
+    slow_return_window: int,
+    risk_window: int,
+    score_threshold: float,
+) -> pd.Series:
+    close = data["close"].astype(float)
+    fast_return = close.pct_change(fast_return_window)
+    slow_return = close.pct_change(slow_return_window)
+    volatility = close.pct_change().rolling(risk_window).std(ddof=0)
+    drawdown = close / close.rolling(risk_window).max() - 1.0
+    score = (
+        _rolling_zscore(fast_return, 252)
+        + _rolling_zscore(slow_return, 252)
+        - _rolling_zscore(volatility, 252)
+        + _rolling_zscore(drawdown, 252)
+    )
+    signal = (score > score_threshold).astype(int)
+    signal[score.isna()] = 0
+    return signal
+
+
+def _rolling_zscore(series: pd.Series, window: int) -> pd.Series:
+    mean = series.rolling(window, min_periods=max(20, window // 4)).mean()
+    std = series.rolling(window, min_periods=max(20, window // 4)).std(ddof=0)
+    return (series - mean) / std.replace(0, np.nan)
 
 
 def _run_signals_backtest(
@@ -434,6 +528,7 @@ def _feature_count(params: dict[str, Any]) -> int:
         "rsi_reversion": 1,
         "breakout": 2,
         "volatility_momentum": 2,
+        "linear_score": 4,
     }
     return rule_feature_count.get(str(params.get("rule")), 1)
 
@@ -447,4 +542,6 @@ def _valid_candidate(params: dict[str, Any]) -> bool:
         return float(params["rsi_buy"]) < float(params["rsi_sell"])
     if params.get("rule") == "breakout":
         return int(params["exit_window"]) <= int(params["breakout_window"])
+    if params.get("rule") == "linear_score":
+        return int(params["fast_return_window"]) < int(params["slow_return_window"])
     return True

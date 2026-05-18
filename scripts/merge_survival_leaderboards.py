@@ -31,7 +31,9 @@ def main() -> int:
     summary = {
         "input_files": paths,
         "rows": int(len(leaderboard)),
+        "candidates_evaluated": int(len(leaderboard)),
         "accepted": int(len(accepted)),
+        "rejection_counts": _value_counts(leaderboard, "rejection_reason"),
         "output": str(output_path),
         "best": {} if leaderboard.empty else leaderboard.iloc[0].to_dict(),
         "locked_opened": False,
@@ -49,6 +51,12 @@ def _write_jsonl(frame, path: str) -> None:
     with output_path.open("w", encoding="utf-8") as handle:
         for row in frame.to_dict(orient="records"):
             handle.write(json.dumps(row, default=str, sort_keys=True) + "\n")
+
+
+def _value_counts(frame, column: str) -> dict[str, int]:
+    if frame.empty or column not in frame:
+        return {}
+    return {str(key): int(value) for key, value in frame[column].value_counts(dropna=False).items()}
 
 
 if __name__ == "__main__":
