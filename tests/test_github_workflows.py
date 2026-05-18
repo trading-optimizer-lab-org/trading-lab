@@ -21,3 +21,14 @@ def test_survival_search_workflow_is_manual_and_never_mentions_locked_output() -
     assert "--total-stages 64" in text
     assert "actions/github-script" in text
     assert "Survival Search latest result" in text
+
+
+def test_survival_watchdog_runs_on_schedule_and_can_relaunch() -> None:
+    text = Path(".github/workflows/survival-watchdog.yml").read_text(encoding="utf-8")
+
+    assert "*/10 * * * *" in text
+    assert "workflow_dispatch" in text
+    assert "actions: write" in text
+    assert "issues: write" in text
+    assert "scripts/watch_survival_search.py" in text
+    assert "--relaunch-on-terminal-problem" in text
