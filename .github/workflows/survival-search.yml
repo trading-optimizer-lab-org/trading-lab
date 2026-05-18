@@ -20,6 +20,11 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
 jobs:
   data:
     runs-on: ubuntu-latest
@@ -100,3 +105,56 @@ jobs:
             outputs/survival/survival_summary.json
             outputs/survival/survival_candidates.jsonl
             outputs/survival/rejected_candidates.jsonl
+      - name: Publish final issue summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const summary = JSON.parse(fs.readFileSync("outputs/survival/survival_summary.json", "utf8"));
+            const best = summary.best || {};
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              "# Survival Search latest result",
+              "",
+              `Run: ${runUrl}`,
+              `Commit: ${context.sha}`,
+              "",
+              `Candidates evaluated: ${summary.candidates_evaluated ?? summary.rows ?? 0}`,
+              `Accepted: ${summary.accepted ?? 0}`,
+              "",
+              "## Best candidate",
+              "",
+              `ID: ${best.candidate_id ?? "none"}`,
+              `Rule: ${best.rule ?? "none"}`,
+              `Feature: ${best.feature_name ?? "n/a"}`,
+              `Train Calmar: ${best.train_calmar ?? "n/a"}`,
+              `Validation Calmar: ${best.validation_calmar ?? "n/a"}`,
+              `Robust passes: ${best.robust_passes ?? "n/a"} / ${best.robust_total ?? "n/a"}`,
+              `Accepted: ${best.accepted ?? false}`,
+              `Rejection reason: ${best.rejection_reason ?? "none"}`,
+              "",
+              "Artifacts: download `survival-leaderboard` from this run."
+            ].join("\n");
+            const title = "Survival Search latest result";
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100,
+            });
+            const existing = issues.find(issue => issue.title === title);
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+              });
+            }

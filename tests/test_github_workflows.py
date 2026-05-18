@@ -19,3 +19,5 @@ def test_survival_search_workflow_is_manual_and_never_mentions_locked_output() -
     assert "--feature-panel" in text
     assert "survival_leaderboard.csv" in text
     assert "--total-stages 64" in text
+    assert "actions/github-script" in text
+    assert "Survival Search latest result" in text
