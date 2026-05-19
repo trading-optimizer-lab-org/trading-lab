@@ -1,15 +1,6 @@
 name: SPY-only Survival Search
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/survival-spy-only.yml"
-      - "configs/survival_spy_only_github.yaml"
-      - "scripts/download_public_data.py"
-      - "scripts/run_survival_spy_only_stage.py"
-      - "scripts/merge_survival_leaderboards.py"
-      - "src/**"
   workflow_dispatch:
     inputs:
       config:

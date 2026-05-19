@@ -64,6 +64,7 @@ def test_survival_spy_only_workflow_enforces_single_asset_always_invested_search
     text = Path(".github/workflows/survival-spy-only.yml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch" in text
+    assert "push:" not in text
     assert "scripts/run_survival_spy_only_stage.py" in text
     assert "survival-spy-only-leaderboard" in text
     assert "--total-stages 64" in text
