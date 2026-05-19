@@ -1,0 +1,154 @@
+name: SPY-only Beam Search
+
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: Config file
+        required: true
+        default: configs/survival_spy_only_github.yaml
+  workflow_run:
+    workflows: ["SPY-only Adaptive Train-first Search"]
+    types: [completed]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+jobs:
+  data:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download full public feature panel
+        run: python scripts/download_public_data.py --output data/public/spy_daily.csv --feature-panel
+      - name: Upload feature panel
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-daily-feature-panel-beam
+          path: data/public/spy_daily.csv
+
+  survival-spy-only-beam:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    needs: data
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        stage: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download feature panel
+        uses: actions/download-artifact@v4
+        with:
+          name: spy-daily-feature-panel-beam
+          path: data/public
+      - name: Run SPY-only beam stage
+        run: python scripts/run_survival_spy_only_beam_stage.py --config "${{ github.event.inputs.config || 'configs/survival_spy_only_github.yaml' }}" --stage "${{ matrix.stage }}" --total-stages 48 --seed-pool 160 --beam-width 24 --generations 4 --mutations-per-parent 8
+      - name: Upload stage
+        uses: actions/upload-artifact@v4
+        with:
+          name: survival-spy-only-beam-stage-${{ matrix.stage }}
+          path: outputs/survival_spy_only/survival_spy_only_beam_stage_${{ matrix.stage }}.csv
+
+  merge:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    needs: survival-spy-only-beam
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download stages
+        uses: actions/download-artifact@v4
+        with:
+          path: outputs/survival_spy_only
+          pattern: survival-spy-only-beam-stage-*
+          merge-multiple: true
+      - name: Merge beam leaderboards
+        run: python scripts/merge_survival_leaderboards.py --input-glob "outputs/survival_spy_only/survival_spy_only_beam_stage_*.csv" --output outputs/survival_spy_only/survival_beam_leaderboard.csv --summary outputs/survival_spy_only/survival_beam_summary.json --candidates outputs/survival_spy_only/survival_beam_candidates.jsonl --rejected outputs/survival_spy_only/rejected_beam_candidates.jsonl
+      - name: Validate final leaderboard
+        run: python scripts/validate_results.py outputs/survival_spy_only/survival_beam_leaderboard.csv outputs/survival_spy_only/survival_beam_summary.json
+      - name: Upload final leaderboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: survival-spy-only-beam-leaderboard
+          path: |
+            outputs/survival_spy_only/survival_beam_leaderboard.csv
+            outputs/survival_spy_only/survival_beam_summary.json
+            outputs/survival_spy_only/survival_beam_candidates.jsonl
+            outputs/survival_spy_only/rejected_beam_candidates.jsonl
+      - name: Publish final issue summary
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const summary = JSON.parse(fs.readFileSync("outputs/survival_spy_only/survival_beam_summary.json", "utf8"));
+            const best = summary.best || {};
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              "# SPY-only beam latest result",
+              "",
+              `Run: ${runUrl}`,
+              `Commit: ${context.sha}`,
+              "",
+              `Candidates evaluated: ${summary.candidates_evaluated ?? summary.rows ?? 0}`,
+              `Accepted strict: ${summary.accepted ?? 0}`,
+              "",
+              "## Best candidate",
+              "",
+              `ID: ${best.candidate_id ?? "none"}`,
+              `Rule: ${best.rule ?? "none"}`,
+              `Traded asset: ${best.traded_asset ?? "SPY"}`,
+              `Cash allowed: ${best.cash_allowed ?? false}`,
+              `Always invested: ${best.always_fully_invested ?? true}`,
+              `Train Calmar: ${best.train_calmar ?? "n/a"}`,
+              `Validation Calmar: ${best.validation_calmar ?? "n/a"}`,
+              `Train block min Calmar: ${best.train_block_min_calmar ?? "n/a"}`,
+              `Validation block min Calmar: ${best.validation_block_min_calmar ?? "n/a"}`,
+              `Walk-forward: ${best.walkforward_passes ?? "n/a"} / ${best.walkforward_total ?? "n/a"}`,
+              `Robust passes: ${best.robust_passes ?? "n/a"} / ${best.robust_total ?? "n/a"}`,
+              `Soft pass: ${best.soft_pass ?? false}`,
+              `Accepted strict: ${best.accepted ?? false}`,
+              `Rejection reason: ${best.rejection_reason ?? "none"}`,
+              "",
+              "Artifacts: download `survival-spy-only-beam-leaderboard` from this run."
+            ].join("\n");
+            const title = "SPY-only beam latest result";
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100,
+            });
+            const existing = issues.find(issue => issue.title === title);
+            if (existing) {
+              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body });
+            }
