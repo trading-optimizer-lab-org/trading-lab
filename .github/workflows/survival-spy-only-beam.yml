@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   data:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -45,7 +45,7 @@ jobs:
           path: data/public/spy_daily.csv
 
   survival-spy-only-beam:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     needs: data
     timeout-minutes: 330
@@ -75,7 +75,7 @@ jobs:
           path: outputs/survival_spy_only/survival_spy_only_beam_stage_${{ matrix.stage }}.csv
 
   merge:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     needs: survival-spy-only-beam
     timeout-minutes: 20
