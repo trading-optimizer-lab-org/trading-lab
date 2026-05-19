@@ -143,6 +143,24 @@ def test_survival_spy_only_shootout_workflow_compares_all_methods_manually() -> 
     assert "CASH" not in text
 
 
+def test_survival_spy_only_marathon_runs_five_methods_for_nine_hours() -> None:
+    text = Path(".github/workflows/survival-spy-only-marathon-9h.yml").read_text(encoding="utf-8")
+
+    assert ".github/marathon-trigger.txt" in text
+    assert "workflow_dispatch" in text
+    assert "method: [adaptive, beam, bayesian, bandit, genetic]" in text
+    assert "lane: [0, 1, 2, 3]" in text
+    assert "chunk: [0, 1, 2]" in text
+    assert "--minutes 170" in text
+    assert "scripts/run_survival_spy_only_marathon_chunk.py" in text
+    assert "survival-spy-only-marathon-9h-leaderboard" in text
+    assert "SPY-only" in text
+    assert "TLT" not in text
+    assert "GLD" not in text
+    assert "SHY" not in text
+    assert "CASH" not in text
+
+
 def test_codespaces_devcontainer_uses_existing_python_image() -> None:
     text = Path(".devcontainer/devcontainer.json").read_text(encoding="utf-8")
 

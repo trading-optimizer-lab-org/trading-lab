@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -46,8 +47,9 @@ def main() -> int:
         "output": str(output_path),
         "locked_opened": False,
     }
-    Path(args.summary).write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
-    print(json.dumps(summary, indent=2, default=str))
+    clean_summary = _json_clean(summary)
+    Path(args.summary).write_text(json.dumps(clean_summary, indent=2, default=str), encoding="utf-8")
+    print(json.dumps(clean_summary, indent=2, default=str))
     return 0
 
 
@@ -65,6 +67,8 @@ def _read_inputs(paths: list[str]) -> pd.DataFrame:
 
 
 def _method_for_row(row: pd.Series) -> str:
+    if isinstance(row.get("marathon_method"), str) and row["marathon_method"] not in {"", "nan"}:
+        return str(row["marathon_method"])
     if isinstance(row.get("meta_method"), str) and row["meta_method"] not in {"", "nan"}:
         return str(row["meta_method"])
     rule = str(row.get("rule", ""))
@@ -140,6 +144,16 @@ def _method_table(leaderboard: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows).sort_values("best_score", ascending=False)
+
+
+def _json_clean(value):
+    if isinstance(value, dict):
+        return {key: _json_clean(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_clean(item) for item in value]
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    return value
 
 
 if __name__ == "__main__":
