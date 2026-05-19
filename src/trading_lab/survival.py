@@ -176,7 +176,7 @@ def evaluate_survival_candidate(
         "validation_negative_years": _negative_year_count(validation_result.equity_curve),
         "locked_opened": False,
     }
-    if params.get("rule") == "spy_long_short_always":
+    if params.get("rule") in {"spy_long_short_always", "spy_long_short_score"}:
         row.update(
             {
                 "traded_asset": "SPY",
@@ -252,9 +252,11 @@ def _run_candidate(
             slippage_bps=slippage_bps,
         )
     signals = _signals_for_rule(data, params)
+    initial_position = 1 if rule in {"spy_long_short_always", "spy_long_short_score"} else 0
     return _run_signals_backtest(
         data,
         signals=signals,
+        initial_position=initial_position,
         initial_cash=initial_cash,
         commission_bps=commission_bps,
         slippage_bps=slippage_bps,
@@ -344,6 +346,16 @@ def _signals_for_rule(data: pd.DataFrame, params: dict[str, Any]) -> pd.Series:
             short_specs=str(params["short_specs"]),
             long_min_votes=int(params["long_min_votes"]),
             short_min_votes=int(params["short_min_votes"]),
+            confirm_days=int(params.get("confirm_days", 1)),
+            min_hold_days=int(params.get("min_hold_days", 1)),
+        )
+    if rule == "spy_long_short_score":
+        return _spy_long_short_score_signals(
+            data,
+            specs=str(params["feature_specs"]),
+            score_threshold=float(params.get("score_threshold", 0.0)),
+            confirm_days=int(params.get("confirm_days", 1)),
+            min_hold_days=int(params.get("min_hold_days", 1)),
         )
     raise ValueError(f"unsupported survival rule: {rule}")
 
@@ -564,12 +576,74 @@ def _spy_long_short_always_signals(
     short_specs: str,
     long_min_votes: int,
     short_min_votes: int,
+    confirm_days: int = 1,
+    min_hold_days: int = 1,
 ) -> pd.Series:
     long_signal = _feature_vote_signals(data, specs=long_specs, min_votes=long_min_votes).astype(bool)
     short_signal = _feature_vote_signals(data, specs=short_specs, min_votes=short_min_votes).astype(bool)
     signal = pd.Series(1, index=data.index, dtype=int)
     signal[short_signal & ~long_signal] = -1
-    return signal
+    return _apply_position_memory(signal, confirm_days=confirm_days, min_hold_days=min_hold_days)
+
+
+def _spy_long_short_score_signals(
+    data: pd.DataFrame,
+    *,
+    specs: str,
+    score_threshold: float,
+    confirm_days: int = 1,
+    min_hold_days: int = 1,
+) -> pd.Series:
+    scores = []
+    for spec in _decode_feature_specs(specs):
+        feature = data[spec["name"]].astype(float)
+        window = int(spec["window"]) if int(spec["window"]) > 0 else 120
+        direction = int(spec["direction"])
+        scores.append(direction * _rolling_zscore(feature, window))
+    if not scores:
+        raw = pd.Series(1, index=data.index, dtype=int)
+    else:
+        score = sum(scores) / sqrt(len(scores))
+        raw = pd.Series(1, index=data.index, dtype=int)
+        raw[score < -abs(score_threshold)] = -1
+        raw[score.isna()] = 1
+    return _apply_position_memory(raw, confirm_days=confirm_days, min_hold_days=min_hold_days)
+
+
+def _apply_position_memory(
+    raw_signal: pd.Series,
+    *,
+    confirm_days: int,
+    min_hold_days: int,
+) -> pd.Series:
+    confirm_days = max(1, int(confirm_days))
+    min_hold_days = max(1, int(min_hold_days))
+    output = pd.Series(1, index=raw_signal.index, dtype=int)
+    current = 1
+    pending = 0
+    pending_count = 0
+    days_in_position = min_hold_days
+    for timestamp, raw_value in raw_signal.fillna(1).astype(int).items():
+        desired = 1 if raw_value >= 0 else -1
+        if desired == current:
+            pending = 0
+            pending_count = 0
+            days_in_position += 1
+        else:
+            if desired != pending:
+                pending = desired
+                pending_count = 1
+            else:
+                pending_count += 1
+            if pending_count >= confirm_days and days_in_position >= min_hold_days:
+                current = desired
+                days_in_position = 1
+                pending = 0
+                pending_count = 0
+            else:
+                days_in_position += 1
+        output.loc[timestamp] = current
+    return output
 
 
 def _signal_long_fraction(data: pd.DataFrame, params: dict[str, Any]) -> float:
@@ -624,15 +698,16 @@ def _run_signals_backtest(
     data: pd.DataFrame,
     *,
     signals: pd.Series,
+    initial_position: int = 0,
     initial_cash: float,
     commission_bps: float,
     slippage_bps: float,
 ):
     from trading_lab.backtest import BacktestResult, calculate_metrics
 
-    desired_position = signals.shift(1).fillna(0).astype(int)
+    desired_position = signals.shift(1).fillna(initial_position).astype(int)
     returns = data["close"].pct_change().fillna(0.0)
-    position = desired_position.reindex(data.index).fillna(0).astype(float)
+    position = desired_position.reindex(data.index).fillna(initial_position).astype(float)
     cost_rate = (commission_bps + slippage_bps) / 10_000
     turnover = position.diff().abs().fillna(position.abs())
     strategy_returns = position * returns - turnover * cost_rate
@@ -884,6 +959,7 @@ def _feature_count(params: dict[str, Any]) -> int:
         + len(_decode_feature_specs(str(params.get("short_specs", "")))),
         "spy_long_short_always": len(_decode_feature_specs(str(params.get("long_specs", ""))))
         + len(_decode_feature_specs(str(params.get("short_specs", "")))),
+        "spy_long_short_score": len(_decode_feature_specs(str(params.get("feature_specs", "")))),
         "portfolio_regime": len(_decode_feature_specs(str(params.get("risk_on_specs", ""))))
         + len(_decode_feature_specs(str(params.get("stress_specs", "")))),
     }
@@ -921,6 +997,8 @@ def _valid_candidate(params: dict[str, Any]) -> bool:
             and int(params.get("long_min_votes", 0)) >= 1
             and int(params.get("short_min_votes", 0)) >= 1
         )
+    if params.get("rule") == "spy_long_short_score":
+        return bool(params.get("feature_specs"))
     if params.get("rule") == "portfolio_regime":
         return (
             bool(params.get("risk_on_specs"))
@@ -932,6 +1010,16 @@ def _valid_candidate(params: dict[str, Any]) -> bool:
             and bool(params.get("stress_asset"))
         )
     return True
+
+
+def validate_spy_only_candidate(params: dict[str, Any]) -> None:
+    rule = str(params.get("rule", ""))
+    if rule not in {"spy_long_short_always", "spy_long_short_score"}:
+        raise ValueError(f"SPY-only objective only allows SPY long/short rules, got: {rule}")
+    forbidden_assets = {"risk_asset", "safe_asset", "stress_asset", "asset"}
+    for key in forbidden_assets:
+        if key in params and str(params[key]).upper() != "SPY":
+            raise ValueError(f"SPY-only objective cannot trade {params[key]} from {key}")
 
 
 def expand_feature_parameter_space(

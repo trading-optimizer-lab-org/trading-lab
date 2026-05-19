@@ -74,6 +74,23 @@ def test_survival_spy_only_workflow_enforces_single_asset_always_invested_search
     assert "CASH" not in text
 
 
+def test_survival_spy_only_adaptive_workflow_runs_train_first_search() -> None:
+    text = Path(".github/workflows/survival-spy-only-adaptive.yml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch" in text
+    assert "scripts/run_survival_spy_only_adaptive_stage.py" in text
+    assert "survival-spy-only-adaptive-leaderboard" in text
+    assert "--total-stages 128" in text
+    assert "--candidates-per-stage 2500" in text
+    assert "SPY-only" in text
+    assert "Train Calmar" in text
+    assert "Cash allowed" in text
+    assert "TLT" not in text
+    assert "GLD" not in text
+    assert "SHY" not in text
+    assert "CASH" not in text
+
+
 def test_codespaces_devcontainer_uses_existing_python_image() -> None:
     text = Path(".devcontainer/devcontainer.json").read_text(encoding="utf-8")
 

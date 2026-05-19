@@ -12,7 +12,9 @@ from trading_lab.survival import (
     public_feature_columns,
     split_train_validation,
     survival_score,
+    validate_spy_only_candidate,
 )
+from trading_lab.survival import _run_candidate, _signals_for_rule
 
 
 def sample_daily_data() -> pd.DataFrame:
@@ -297,6 +299,77 @@ def test_spy_only_always_invested_rule_never_goes_to_cash() -> None:
     assert signals["always_fully_invested"] is True
     assert signals["feature_count"] == 2
     assert signals["locked_opened"] is False
+
+
+def test_spy_only_backtest_starts_in_spy_position_not_cash() -> None:
+    data = sample_daily_data()
+    data["slow_trend"] = data["close"].pct_change(63).fillna(0.0)
+    data["stress"] = -data["close"].pct_change(21).fillna(0.0)
+    params = {
+        "rule": "spy_long_short_always",
+        "long_specs": encode_feature_spec(name="slow_trend", kind="threshold", value=0.0),
+        "short_specs": encode_feature_spec(name="stress", kind="threshold", value=0.0),
+        "long_min_votes": 1,
+        "short_min_votes": 1,
+        "confirm_days": 3,
+        "min_hold_days": 5,
+    }
+
+    result = _run_candidate(data, params, 10_000, 0, 0)
+
+    assert not result.trades.empty
+    assert result.trades.iloc[0]["entry_time"] == data.index[0]
+
+
+def test_spy_only_position_memory_avoids_single_day_flip() -> None:
+    data = sample_daily_data()
+    data["long_feature"] = 1.0
+    data["short_feature"] = -1.0
+    data.loc[data.index[10], "short_feature"] = 1.0
+    params = {
+        "rule": "spy_long_short_always",
+        "long_specs": encode_feature_spec(name="long_feature", kind="threshold", value=0.0),
+        "short_specs": encode_feature_spec(name="short_feature", kind="threshold", value=0.0),
+        "long_min_votes": 1,
+        "short_min_votes": 1,
+        "confirm_days": 3,
+        "min_hold_days": 5,
+    }
+
+    signal = _signals_for_rule(data, params)
+
+    assert set(signal.unique()) == {1}
+
+
+def test_spy_only_score_rule_is_always_long_or_short_spy() -> None:
+    data = sample_daily_data()
+    data["risk_feature"] = data["close"].pct_change(21).fillna(0.0)
+    params = {
+        "rule": "spy_long_short_score",
+        "feature_specs": encode_feature_spec(name="risk_feature", kind="zscore", value=0.0, window=20),
+        "score_threshold": 0.25,
+        "confirm_days": 2,
+        "min_hold_days": 3,
+    }
+
+    row = evaluate_survival_candidate(data, params, initial_cash=10_000, commission_bps=0, slippage_bps=0)
+    signal = _signals_for_rule(data, params)
+
+    assert row["traded_asset"] == "SPY"
+    assert row["cash_allowed"] is False
+    assert row["always_fully_invested"] is True
+    assert set(signal.unique()) <= {-1, 1}
+
+
+def test_validate_spy_only_candidate_rejects_cash_and_other_assets() -> None:
+    validate_spy_only_candidate({"rule": "spy_long_short_always", "long_specs": "a", "short_specs": "b"})
+
+    try:
+        validate_spy_only_candidate({"rule": "portfolio_regime", "safe_asset": "CASH"})
+    except ValueError as exc:
+        assert "SPY-only" in str(exc)
+    else:
+        raise AssertionError("portfolio_regime must be invalid for SPY-only objective")
 
 
 def test_evaluate_survival_candidate_supports_portfolio_regime() -> None:
