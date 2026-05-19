@@ -1,0 +1,150 @@
+name: SPY-only Bayesian Bandit Genetic
+
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: Config file
+        required: true
+        default: configs/survival_spy_only_github.yaml
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download full public feature panel
+        run: python scripts/download_public_data.py --output data/public/spy_daily.csv --feature-panel
+      - name: Upload feature panel
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-daily-feature-panel-meta
+          path: data/public/spy_daily.csv
+
+  survival-spy-only-meta:
+    runs-on: ubuntu-latest
+    needs: data
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        method: [bayesian, bandit, genetic]
+        stage: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download feature panel
+        uses: actions/download-artifact@v4
+        with:
+          name: spy-daily-feature-panel-meta
+          path: data/public
+      - name: Run SPY-only meta-search stage
+        run: python scripts/run_survival_spy_only_meta_stage.py --method "${{ matrix.method }}" --config "${{ github.event.inputs.config || 'configs/survival_spy_only_github.yaml' }}" --stage "${{ matrix.stage }}" --total-stages 16 --candidates-per-stage 900
+      - name: Upload stage
+        uses: actions/upload-artifact@v4
+        with:
+          name: survival-spy-only-meta-${{ matrix.method }}-stage-${{ matrix.stage }}
+          path: outputs/survival_spy_only/survival_spy_only_${{ matrix.method }}_stage_${{ matrix.stage }}.csv
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: survival-spy-only-meta
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download stages
+        uses: actions/download-artifact@v4
+        with:
+          path: outputs/survival_spy_only
+          pattern: survival-spy-only-meta-*
+          merge-multiple: true
+      - name: Merge meta-search leaderboards
+        run: python scripts/merge_survival_leaderboards.py --input-glob "outputs/survival_spy_only/survival_spy_only_*_stage_*.csv" --output outputs/survival_spy_only/survival_meta_leaderboard.csv --summary outputs/survival_spy_only/survival_meta_summary.json --candidates outputs/survival_spy_only/survival_meta_candidates.jsonl --rejected outputs/survival_spy_only/rejected_meta_candidates.jsonl
+      - name: Validate final leaderboard
+        run: python scripts/validate_results.py outputs/survival_spy_only/survival_meta_leaderboard.csv outputs/survival_spy_only/survival_meta_summary.json
+      - name: Upload final leaderboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: survival-spy-only-meta-leaderboard
+          path: |
+            outputs/survival_spy_only/survival_meta_leaderboard.csv
+            outputs/survival_spy_only/survival_meta_summary.json
+            outputs/survival_spy_only/survival_meta_candidates.jsonl
+            outputs/survival_spy_only/rejected_meta_candidates.jsonl
+      - name: Publish final issue summary
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const summary = JSON.parse(fs.readFileSync("outputs/survival_spy_only/survival_meta_summary.json", "utf8"));
+            const best = summary.best || {};
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              "# SPY-only meta-search latest result",
+              "",
+              `Run: ${runUrl}`,
+              `Commit: ${context.sha}`,
+              "",
+              `Candidates evaluated: ${summary.candidates_evaluated ?? summary.rows ?? 0}`,
+              `Accepted strict: ${summary.accepted ?? 0}`,
+              "",
+              "## Best candidate",
+              "",
+              `ID: ${best.candidate_id ?? "none"}`,
+              `Method: ${best.meta_method ?? "n/a"}`,
+              `Rule: ${best.rule ?? "none"}`,
+              `Traded asset: ${best.traded_asset ?? "SPY"}`,
+              `Cash allowed: ${best.cash_allowed ?? false}`,
+              `Always invested: ${best.always_fully_invested ?? true}`,
+              `Train Calmar: ${best.train_calmar ?? "n/a"}`,
+              `Validation Calmar: ${best.validation_calmar ?? "n/a"}`,
+              `Train block min Calmar: ${best.train_block_min_calmar ?? "n/a"}`,
+              `Validation block min Calmar: ${best.validation_block_min_calmar ?? "n/a"}`,
+              `Walk-forward: ${best.walkforward_passes ?? "n/a"} / ${best.walkforward_total ?? "n/a"}`,
+              `Robust passes: ${best.robust_passes ?? "n/a"} / ${best.robust_total ?? "n/a"}`,
+              `Soft pass: ${best.soft_pass ?? false}`,
+              `Accepted strict: ${best.accepted ?? false}`,
+              `Rejection reason: ${best.rejection_reason ?? "none"}`,
+              "",
+              "Artifacts: download `survival-spy-only-meta-leaderboard` from this run."
+            ].join("\n");
+            const title = "SPY-only meta-search latest result";
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100,
+            });
+            const existing = issues.find(issue => issue.title === title);
+            if (existing) {
+              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body });
+            }
