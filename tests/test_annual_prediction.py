@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from scripts.merge_annual_beam_leaderboards import summarize_annual_leaderboard
 from trading_lab.annual_prediction import (
     AnnualBeamConfig,
     AnnualCandidate,
@@ -92,6 +93,20 @@ def test_build_annual_examples_exposes_requested_manifest_columns() -> None:
     assert missing == []
 
 
+def test_build_annual_examples_adds_clean_annual_derivatives() -> None:
+    examples = build_annual_examples(_daily_sample(), start_year=1981, end_year=1990)
+
+    expected = {
+        "cape_annual_change_1y",
+        "cape_annual_change_3y",
+        "cape_annual_percentile",
+        "earnings_yield_annual_change_1y",
+    }
+
+    assert expected.issubset(examples.columns)
+    assert examples["cape_annual_change_1y"].notna().sum() > 0
+
+
 def test_audit_annual_feature_coverage_marks_usable_and_unusable_features() -> None:
     examples = build_annual_examples(_daily_sample(), start_year=1981, end_year=2008)
 
@@ -137,6 +152,66 @@ def test_annual_beam_search_returns_ranked_candidates() -> None:
     assert rows[0]["annual_score"] >= rows[-1]["annual_score"]
     assert all(row["locked_opened"] is False for row in rows)
     assert all(int(row["feature_count"]) <= 4 for row in rows)
+
+
+def test_annual_candidate_supports_range_rules() -> None:
+    examples = pd.DataFrame(
+        {
+            "target_year": [2001, 2002, 2003],
+            "target_positive": [False, True, False],
+            "spy_return_next_year": [-0.1, 0.2, -0.2],
+            "x": [0.1, 0.5, 0.9],
+        }
+    )
+    candidate = AnnualCandidate(("x|range|0.2|0.8|1",), min_votes=1)
+
+    row = evaluate_annual_candidate(examples, candidate, score_mode="train_only_100")
+
+    assert row["train_hits"] == 3
+
+
+def test_annual_candidate_supports_weighted_or_rules() -> None:
+    examples = pd.DataFrame(
+        {
+            "target_year": [2001, 2002, 2003, 2004],
+            "target_positive": [True, False, True, False],
+            "spy_return_next_year": [0.1, -0.2, 0.05, -0.1],
+            "a": [1.0, 1.0, 0.0, 0.0],
+            "b": [1.0, 0.0, 0.0, 0.0],
+            "c": [0.0, 0.0, 1.0, 0.0],
+        }
+    )
+    candidate = AnnualCandidate(
+        (
+            "a|threshold|0.5|1|1",
+            "b|threshold|0.5|1|1",
+            "c|threshold|0.5|1|2",
+        ),
+        min_votes=2,
+    )
+
+    row = evaluate_annual_candidate(examples, candidate, score_mode="train_only_100")
+
+    assert row["train_hits"] == 4
+
+
+def test_annual_beam_catalog_includes_range_and_weighted_rules() -> None:
+    examples = build_annual_examples(_daily_sample(), start_year=1981, end_year=2020)
+    config = AnnualBeamConfig(
+        stage=0,
+        total_stages=2,
+        seed_pool=40,
+        beam_width=8,
+        generations=2,
+        mutations_per_parent=4,
+        max_features=6,
+    )
+
+    rows = run_annual_beam_search(examples, config)
+    specs = ";".join(str(row["specs"]) for row in rows)
+
+    assert "|range|" in specs
+    assert any("|2" in part or "|3" in part for part in specs.split(";"))
 
 
 def test_train_only_100_score_ignores_validation_metrics() -> None:
@@ -247,3 +322,19 @@ def test_train_validation_100_score_ignores_validation_quality_but_acceptance_re
         )
         == "validation_not_perfect"
     )
+
+
+def test_annual_merge_counts_candidates_evaluated_from_stage_metadata() -> None:
+    leaderboard = pd.DataFrame(
+        [
+            {"stage": 0, "stage_candidates_evaluated": 1000, "annual_score": 3.0, "accepted": False},
+            {"stage": 0, "stage_candidates_evaluated": 1000, "annual_score": 2.0, "accepted": False},
+            {"stage": 1, "stage_candidates_evaluated": 2000, "annual_score": 5.0, "accepted": True},
+        ]
+    )
+
+    summary = summarize_annual_leaderboard(leaderboard)
+
+    assert summary["rows"] == 3
+    assert summary["candidates_evaluated"] == 3000
+    assert summary["accepted"] == 1

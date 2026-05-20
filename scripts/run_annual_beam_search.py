@@ -26,6 +26,7 @@ def main() -> int:
     parser.add_argument("--mutations-per-parent", type=int, default=12)
     parser.add_argument("--max-features", type=int, default=None)
     parser.add_argument("--score-mode", default=None)
+    parser.add_argument("--top-rows-per-stage", type=int, default=None)
     args = parser.parse_args()
 
     output_dir = Path("outputs/annual_sp500_beam")
@@ -64,6 +65,18 @@ def main() -> int:
                 "locked_opened": False,
             }
         ]
+    total_rows = len(rows)
+    for row in rows:
+        row["stage"] = args.stage
+        row["stage_candidates_evaluated"] = total_rows
+    top_rows = int(args.top_rows_per_stage or 0)
+    if top_rows > 0 and len(rows) > top_rows:
+        accepted_rows = [row for row in rows if bool(row.get("accepted"))]
+        top = sorted(rows, key=lambda row: float(row.get("annual_score", -1_000_000.0) or -1_000_000.0), reverse=True)[
+            :top_rows
+        ]
+        by_id = {str(row.get("candidate_id")): row for row in [*top, *accepted_rows]}
+        rows = sorted(by_id.values(), key=lambda row: float(row.get("annual_score", -1_000_000.0) or -1_000_000.0), reverse=True)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"annual_sp500_beam_stage_{args.stage}.csv"
     pd.DataFrame(rows).to_csv(output_path, index=False)
@@ -72,6 +85,7 @@ def main() -> int:
             {
                 "stage": args.stage,
                 "rows": len(rows),
+                "candidates_evaluated": total_rows,
                 "examples": examples_count,
                 "accepted": int(sum(bool(row.get("accepted")) for row in rows)),
                 "stage_failed": any(bool(row.get("stage_failed")) for row in rows),

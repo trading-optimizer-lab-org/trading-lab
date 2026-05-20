@@ -26,18 +26,28 @@ def main() -> int:
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     leaderboard.to_csv(output, index=False)
+    summary = summarize_annual_leaderboard(leaderboard)
+    Path(args.summary).write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
+def summarize_annual_leaderboard(leaderboard: pd.DataFrame) -> dict[str, object]:
     best = leaderboard.iloc[0].to_dict() if not leaderboard.empty else {}
-    summary = {
+    if {"stage", "stage_candidates_evaluated"}.issubset(leaderboard.columns):
+        candidates_evaluated = int(
+            leaderboard.groupby("stage")["stage_candidates_evaluated"].max().fillna(0).sum()
+        )
+    else:
+        candidates_evaluated = int(len(leaderboard))
+    return {
         "rows": int(len(leaderboard)),
-        "candidates_evaluated": int(len(leaderboard)),
+        "candidates_evaluated": candidates_evaluated,
         "accepted": int(leaderboard["accepted"].fillna(False).astype(bool).sum()) if "accepted" in leaderboard else 0,
         "stage_failures": int(leaderboard["stage_failed"].fillna(False).astype(bool).sum()) if "stage_failed" in leaderboard else 0,
         "best": _json_clean(best),
         "locked_opened": False,
     }
-    Path(args.summary).write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    print(json.dumps(summary, indent=2))
-    return 0
 
 
 def _json_clean(value):

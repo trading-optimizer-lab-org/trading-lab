@@ -70,6 +70,7 @@ def build_annual_examples(
         examples["decision_date"] = pd.to_datetime(examples["decision_date"])
         examples["target_positive"] = examples["target_positive"].astype(bool)
     examples = _ensure_manifest_columns(examples)
+    examples = _add_annual_derived_features(examples)
     return examples.replace([np.inf, -np.inf], np.nan)
 
 
@@ -493,6 +494,30 @@ def _ensure_manifest_columns(examples: pd.DataFrame) -> pd.DataFrame:
     return examples.copy()
 
 
+def _add_annual_derived_features(examples: pd.DataFrame) -> pd.DataFrame:
+    if examples.empty:
+        return examples
+    reserved = {"target_year", "decision_date", "spy_return_next_year", "target_positive"}
+    output = examples.copy()
+    derived: dict[str, pd.Series] = {}
+    ordered = output.sort_values("target_year").reset_index(drop=True)
+    for column in list(output.columns):
+        if column in reserved or column.endswith(("_annual_change_1y", "_annual_change_3y", "_annual_percentile")):
+            continue
+        series = pd.to_numeric(ordered[column], errors="coerce")
+        if series.notna().sum() < 4 or series.nunique(dropna=True) < 3:
+            continue
+        derived[f"{column}_annual_change_1y"] = series.diff(1)
+        derived[f"{column}_annual_change_3y"] = series.diff(3)
+        derived[f"{column}_annual_percentile"] = _expanding_percentile(series)
+    if not derived:
+        return output
+    derived_frame = pd.DataFrame(derived)
+    derived_frame.index = ordered.index
+    enriched = pd.concat([ordered, derived_frame], axis=1)
+    return enriched.sort_values("target_year").reset_index(drop=True)
+
+
 def _political_features(target_year: int) -> dict[str, float]:
     cycle_year = ((target_year - 1981) % 4) + 1
     president_party = _president_party(target_year)
@@ -586,6 +611,18 @@ def _build_spec_catalog(examples: pd.DataFrame) -> list[str]:
                 continue
             specs.append(_encode_spec(column, value, 1))
             specs.append(_encode_spec(column, value, -1))
+            if quantile == 0.50:
+                specs.append(_encode_weighted_threshold_spec(column, value, 1, 2))
+                specs.append(_encode_weighted_threshold_spec(column, value, -1, 2))
+        for lower_quantile, upper_quantile in ((0.20, 0.80), (0.25, 0.75), (0.33, 0.67)):
+            lower = float(series.quantile(lower_quantile))
+            upper = float(series.quantile(upper_quantile))
+            if not isfinite(lower) or not isfinite(upper) or lower >= upper:
+                continue
+            specs.append(_encode_range_spec(column, lower, upper, 1))
+            specs.append(_encode_range_spec(column, lower, upper, -1))
+            if lower_quantile == 0.25:
+                specs.append(_encode_weighted_range_spec(column, lower, upper, 1, 2))
     return sorted(set(specs))
 
 
@@ -626,7 +663,7 @@ def _seed_candidates(
     while len(candidates) < config.seed_pool:
         size = int(rng.integers(1, config.max_features + 1))
         specs = tuple(sorted(rng.choice(catalog, size=size, replace=False).tolist()))
-        min_votes = int(rng.integers(1, size + 1))
+        min_votes = int(rng.integers(1, _candidate_weight_total(specs) + 1))
         candidates.append(AnnualCandidate(specs, min_votes=min_votes))
     return candidates
 
@@ -640,7 +677,8 @@ def _evaluate_unique(
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for candidate in candidates:
-        clean = AnnualCandidate(tuple(sorted(set(candidate.specs))), max(1, min(candidate.min_votes, len(candidate.specs))))
+        specs = tuple(sorted(set(candidate.specs)))[: max(1, len(candidate.specs))]
+        clean = AnnualCandidate(specs, max(1, min(candidate.min_votes, _candidate_weight_total(specs))))
         key = (clean.specs, clean.min_votes)
         if key in seen or not clean.specs:
             continue
@@ -671,16 +709,19 @@ def _mutate_candidate(
     rng: np.random.Generator,
 ) -> AnnualCandidate:
     specs = list(candidate.specs)
-    action = str(rng.choice(["replace", "replace", "add", "remove", "votes"]))
+    action = str(rng.choice(["replace", "replace", "add", "remove", "votes", "weight"]))
     if action == "replace" and specs:
         specs[int(rng.integers(0, len(specs)))] = str(catalog[int(rng.integers(0, len(catalog)))])
     elif action == "add" and len(specs) < config.max_features:
         specs.append(str(catalog[int(rng.integers(0, len(catalog)))]))
     elif action == "remove" and len(specs) > 1:
         del specs[int(rng.integers(0, len(specs)))]
+    elif action == "weight" and specs:
+        index = int(rng.integers(0, len(specs)))
+        specs[index] = _set_spec_weight(specs[index], int(rng.choice([1, 2, 3])))
     min_votes = candidate.min_votes
     if action == "votes":
-        min_votes = int(rng.integers(1, len(specs) + 1))
+        min_votes = int(rng.integers(1, _candidate_weight_total(specs) + 1))
     return AnnualCandidate(tuple(sorted(set(specs)))[: config.max_features], min_votes=min_votes)
 
 
@@ -690,16 +731,11 @@ def _candidate_from_row(row: dict[str, object]) -> AnnualCandidate:
 
 
 def _predict_positive(examples: pd.DataFrame, candidate: AnnualCandidate) -> np.ndarray:
-    votes = np.zeros(len(examples), dtype=int)
+    votes = np.zeros(len(examples), dtype=float)
     for spec in candidate.specs:
-        feature, threshold, direction = _decode_spec(spec)
-        values = pd.to_numeric(examples[feature], errors="coerce").to_numpy(dtype=float)
-        if direction >= 0:
-            vote = values > threshold
-        else:
-            vote = values < threshold
-        votes += np.nan_to_num(vote, nan=False).astype(int)
-    return votes >= max(1, min(candidate.min_votes, len(candidate.specs)))
+        vote, weight = _spec_vote_and_weight(examples, spec)
+        votes += np.nan_to_num(vote, nan=False).astype(float) * weight
+    return votes >= max(1, min(candidate.min_votes, _candidate_weight_total(candidate.specs)))
 
 
 def _period_metrics(
@@ -799,11 +835,76 @@ def _encode_spec(feature: str, threshold: float, direction: int) -> str:
     return f"{feature}|threshold|{threshold:.8g}|{int(direction)}"
 
 
-def _decode_spec(spec: str) -> tuple[str, float, int]:
+def _encode_weighted_threshold_spec(feature: str, threshold: float, direction: int, weight: int) -> str:
+    return f"{feature}|threshold|{threshold:.8g}|{int(direction)}|{int(weight)}"
+
+
+def _encode_range_spec(feature: str, lower: float, upper: float, direction: int) -> str:
+    return f"{feature}|range|{lower:.8g}|{upper:.8g}|{int(direction)}"
+
+
+def _encode_weighted_range_spec(feature: str, lower: float, upper: float, direction: int, weight: int) -> str:
+    return f"{feature}|range|{lower:.8g}|{upper:.8g}|{int(direction)}|{int(weight)}"
+
+
+def _decode_threshold_spec(spec: str) -> tuple[str, float, int, int]:
     parts = spec.split("|")
-    if len(parts) != 4 or parts[1] != "threshold":
+    if len(parts) not in {4, 5} or parts[1] != "threshold":
         raise ValueError(f"invalid annual spec: {spec}")
-    return parts[0], float(parts[2]), int(float(parts[3]))
+    weight = int(float(parts[4])) if len(parts) == 5 else 1
+    return parts[0], float(parts[2]), int(float(parts[3])), max(1, weight)
+
+
+def _decode_range_spec(spec: str) -> tuple[str, float, float, int, int]:
+    parts = spec.split("|")
+    if len(parts) not in {5, 6} or parts[1] != "range":
+        raise ValueError(f"invalid annual spec: {spec}")
+    weight = int(float(parts[5])) if len(parts) == 6 else 1
+    return parts[0], float(parts[2]), float(parts[3]), int(float(parts[4])), max(1, weight)
+
+
+def _spec_vote_and_weight(examples: pd.DataFrame, spec: str) -> tuple[np.ndarray, int]:
+    parts = spec.split("|")
+    if len(parts) < 2:
+        raise ValueError(f"invalid annual spec: {spec}")
+    if parts[1] == "threshold":
+        feature, threshold, direction, weight = _decode_threshold_spec(spec)
+        values = pd.to_numeric(examples[feature], errors="coerce").to_numpy(dtype=float)
+        vote = values > threshold if direction >= 0 else values < threshold
+        return vote, weight
+    if parts[1] == "range":
+        feature, lower, upper, direction, weight = _decode_range_spec(spec)
+        values = pd.to_numeric(examples[feature], errors="coerce").to_numpy(dtype=float)
+        inside = (values >= lower) & (values <= upper)
+        vote = inside if direction >= 0 else ~inside
+        return vote, weight
+    raise ValueError(f"invalid annual spec: {spec}")
+
+
+def _spec_weight(spec: str) -> int:
+    parts = spec.split("|")
+    if len(parts) >= 5 and parts[1] == "threshold":
+        return max(1, int(float(parts[4])))
+    if len(parts) >= 6 and parts[1] == "range":
+        return max(1, int(float(parts[5])))
+    return 1
+
+
+def _candidate_weight_total(specs: Iterable[str]) -> int:
+    return max(1, sum(_spec_weight(spec) for spec in specs))
+
+
+def _set_spec_weight(spec: str, weight: int) -> str:
+    parts = spec.split("|")
+    if len(parts) == 4 and parts[1] == "threshold":
+        return "|".join([*parts, str(weight)])
+    if len(parts) == 5 and parts[1] == "threshold":
+        return "|".join([*parts[:4], str(weight)])
+    if len(parts) == 5 and parts[1] == "range":
+        return "|".join([*parts, str(weight)])
+    if len(parts) == 6 and parts[1] == "range":
+        return "|".join([*parts[:5], str(weight)])
+    raise ValueError(f"invalid annual spec: {spec}")
 
 
 def _candidate_id(candidate: AnnualCandidate) -> str:

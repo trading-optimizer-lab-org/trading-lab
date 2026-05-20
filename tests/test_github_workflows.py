@@ -213,6 +213,26 @@ def test_annual_sp500_train_validation_100_workflow_requires_both_periods() -> N
     assert "locked_opened: false" in text
 
 
+def test_annual_sp500_train_validation_wide_workflow_expands_search() -> None:
+    text = Path(".github/workflows/annual-sp500-train-validation-wide.yml").read_text(encoding="utf-8")
+    config = Path("configs/annual_sp500_train_validation_100_wide.yaml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch" in text
+    assert "push:" in text
+    assert ".github/train-validation-wide-trigger.txt" in text
+    assert "configs/annual_sp500_train_validation_100_wide.yaml" in text
+    assert "--score-mode train_validation_100" in text
+    assert "--max-features 6" in text
+    assert "--seed-pool 3000" in text
+    assert "--beam-width 128" in text
+    assert "--generations 18" in text
+    assert "--mutations-per-parent 32" in text
+    assert "--top-rows-per-stage 5000" in text
+    assert "annual-sp500-train-validation-wide-leaderboard" in text
+    assert "score_mode: train_validation_100" in config
+    assert "max_features: 6" in config
+
+
 def test_heavy_workflows_do_not_run_on_push() -> None:
     for path in (
         ".github/workflows/annual-sp500-beam.yml",
