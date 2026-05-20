@@ -240,6 +240,25 @@ def test_annual_validation_optimization_score_modes_are_not_runnable() -> None:
     assert "validation cannot be used as an optimization target" in script
 
 
+def test_annual_sp500_train_only_verify_loop_keeps_validation_report_only() -> None:
+    text = Path(".github/workflows/annual-sp500-train-only-verify-loop.yml").read_text(encoding="utf-8")
+    config = Path("configs/annual_sp500_train_only_verify_loop.yaml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch" in text
+    assert "push:" in text
+    assert ".github/train-only-verify-trigger.txt" in text
+    assert "round: [all_features_5, all_features_8, no_santa_8, no_santa_no_vix_russell_8]" in text
+    assert "--score-mode train_only_100" in text
+    assert "train_validation_hunt_100" not in text
+    assert "--score-mode train_validation_100" not in text
+    assert "scripts/merge_annual_train_only_verification.py" in text
+    assert "validation_role: report_only" in text
+    assert "locked_opened: false" in text
+    assert "annual-sp500-train-only-verify-leaderboard" in text
+    assert "score_mode: train_only_100" in config
+    assert "max_features: 8" in config
+
+
 def test_heavy_workflows_do_not_run_on_push() -> None:
     for path in (
         ".github/workflows/annual-sp500-beam.yml",
