@@ -182,7 +182,8 @@ def test_annual_sp500_train_only_100_workflow_optimizes_train_only() -> None:
     text = Path(".github/workflows/annual-sp500-train-only-100.yml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch" in text
-    assert "push:" not in text
+    assert "push:" in text
+    assert ".github/train-only-100-trigger.txt" in text
     assert "configs/annual_sp500_train_only_100.yaml" in text
     assert "--score-mode train_only_100" in text
     assert "--max-features 5" in text
