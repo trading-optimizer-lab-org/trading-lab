@@ -34,6 +34,7 @@ class AnnualBeamConfig:
     max_features: int = 4
     random_seed: int = 173_000
     score_mode: str = "validation"
+    excluded_feature_terms: tuple[str, ...] = ()
 
 
 def build_annual_examples(
@@ -115,11 +116,17 @@ def evaluate_annual_candidate(
         "train_accuracy": train["accuracy"],
         "train_negative_hits": train["negative_hits"],
         "train_negative_total": train["negative_total"],
+        "train_false_negative": train["false_negative"],
+        "train_false_negative_big": train["false_negative_big"],
+        "train_false_positive": train["false_positive"],
         "validation_hits": validation["hits"],
         "validation_total": validation["total"],
         "validation_accuracy": validation["accuracy"],
         "validation_negative_hits": validation["negative_hits"],
         "validation_negative_total": validation["negative_total"],
+        "validation_false_negative": validation["false_negative"],
+        "validation_false_negative_big": validation["false_negative_big"],
+        "validation_false_positive": validation["false_positive"],
         "train_return_mae": train_mae,
         "validation_return_mae": validation_mae,
         "always_positive_validation_accuracy": _always_positive_accuracy(examples, validation_mask),
@@ -186,6 +193,10 @@ def score_annual_candidate(
         if field == "rejection_reason":
             return _train_validation_100_rejection_reason(row)
         return _train_only_100_score(row)
+    if score_mode == "crisis_stable":
+        if field == "rejection_reason":
+            return _crisis_stable_rejection_reason(row)
+        return _crisis_stable_score(row)
     if score_mode != "validation":
         raise ValueError(f"unknown annual score mode: {score_mode}")
     if field == "rejection_reason":
@@ -233,11 +244,31 @@ def _train_only_100_score(row: dict[str, object]) -> float:
     )
 
 
+def _crisis_stable_score(row: dict[str, object]) -> float:
+    train_accuracy = float(row.get("train_accuracy", 0.0) or 0.0)
+    train_negative_hits = int(row.get("train_negative_hits", 0) or 0)
+    train_negative_total = max(1, int(row.get("train_negative_total", 0) or 0))
+    train_negative_rate = train_negative_hits / train_negative_total
+    false_negative_big = int(row.get("train_false_negative_big", 0) or 0)
+    false_negative = int(row.get("train_false_negative", 0) or 0)
+    feature_count = int(row.get("feature_count", 1) or 1)
+    train_mae = float(row.get("train_return_mae", 1.0) or 1.0)
+    return float(
+        train_accuracy * 1_000.0
+        + train_negative_rate * 600.0
+        + train_negative_hits * 30.0
+        - false_negative_big * 1_500.0
+        - false_negative * 250.0
+        - feature_count * 80.0
+        - train_mae * 10.0
+    )
+
+
 def run_annual_beam_search(
     examples: pd.DataFrame,
     config: AnnualBeamConfig,
 ) -> list[dict[str, object]]:
-    catalog = _build_spec_catalog(examples)
+    catalog = _build_spec_catalog(examples, excluded_feature_terms=config.excluded_feature_terms)
     if not catalog:
         return []
     rng = np.random.default_rng(config.random_seed + config.stage)
@@ -595,12 +626,15 @@ def _senate_party(year: int) -> int:
     return 1 if any(start <= year <= end for start, end in republican_ranges) else -1
 
 
-def _build_spec_catalog(examples: pd.DataFrame) -> list[str]:
+def _build_spec_catalog(examples: pd.DataFrame, *, excluded_feature_terms: tuple[str, ...] = ()) -> list[str]:
     train = examples.loc[examples["target_year"].astype(int) <= TRAIN_END_YEAR]
     reserved = {"target_year", "decision_date", "spy_return_next_year", "target_positive"}
     specs: list[str] = []
     for column in examples.columns:
         if column in reserved:
+            continue
+        lowered = column.lower()
+        if any(term.lower() in lowered for term in excluded_feature_terms):
             continue
         series = pd.to_numeric(train[column], errors="coerce").dropna()
         if not _feature_usable_for_beam(examples[column], examples):
@@ -745,17 +779,32 @@ def _period_metrics(
     mask: np.ndarray,
 ) -> dict[str, object]:
     if not mask.any():
-        return {"hits": 0, "total": 0, "accuracy": 0.0, "negative_hits": 0, "negative_total": 0}
+        return {
+            "hits": 0,
+            "total": 0,
+            "accuracy": 0.0,
+            "negative_hits": 0,
+            "negative_total": 0,
+            "false_negative": 0,
+            "false_negative_big": 0,
+            "false_positive": 0,
+        }
     period_predictions = predictions[mask]
     period_target = target[mask]
     hits = period_predictions == period_target
     negative = returns[mask] < 0
+    false_negative = (~period_predictions) & period_target
+    false_negative_big = false_negative & (returns[mask] > 0.10)
+    false_positive = period_predictions & (~period_target)
     return {
         "hits": int(hits.sum()),
         "total": int(mask.sum()),
         "accuracy": float(hits.mean()),
         "negative_hits": int((hits & negative).sum()),
         "negative_total": int(negative.sum()),
+        "false_negative": int(false_negative.sum()),
+        "false_negative_big": int(false_negative_big.sum()),
+        "false_positive": int(false_positive.sum()),
     }
 
 
@@ -828,6 +877,28 @@ def _train_validation_100_rejection_reason(row: dict[str, object]) -> str:
         row.get("validation_negative_total", 0) or 0
     ):
         return "misses_validation_stress"
+    return ""
+
+
+def _crisis_stable_rejection_reason(row: dict[str, object]) -> str:
+    if int(row.get("feature_count", 1) or 1) > 3:
+        return "too_many_features"
+    if float(row.get("train_accuracy", 0.0) or 0.0) < 0.90:
+        return "train_accuracy"
+    train_negative_total = int(row.get("train_negative_total", 0) or 0)
+    if train_negative_total and int(row.get("train_negative_hits", 0) or 0) / train_negative_total < 0.80:
+        return "misses_train_stress"
+    if int(row.get("train_false_negative_big", 0) or 0) > 0:
+        return "train_false_negative_big"
+    if float(row.get("validation_accuracy", 0.0) or 0.0) < 0.90:
+        return "validation_accuracy"
+    if float(row.get("validation_accuracy", 0.0) or 0.0) <= float(row.get("always_positive_validation_accuracy", 0.0) or 0.0):
+        return "baseline"
+    validation_negative_total = int(row.get("validation_negative_total", 0) or 0)
+    if validation_negative_total and int(row.get("validation_negative_hits", 0) or 0) / validation_negative_total < (2 / 3):
+        return "misses_validation_stress"
+    if int(row.get("validation_false_negative_big", 0) or 0) > 0:
+        return "validation_false_negative_big"
     return ""
 
 

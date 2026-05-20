@@ -324,6 +324,74 @@ def test_train_validation_100_score_ignores_validation_quality_but_acceptance_re
     )
 
 
+def test_crisis_stable_score_penalizes_large_false_negatives() -> None:
+    good = {
+        "feature_count": 3,
+        "train_accuracy": 0.92,
+        "train_negative_hits": 5,
+        "train_negative_total": 6,
+        "train_false_negative_big": 0,
+        "train_return_mae": 0.1,
+    }
+    bad = {**good, "train_false_negative_big": 2}
+
+    assert score_annual_candidate(good, score_mode="crisis_stable") > score_annual_candidate(
+        bad,
+        score_mode="crisis_stable",
+    )
+
+
+def test_crisis_stable_acceptance_requires_validation_stability_and_simple_rules() -> None:
+    accepted = {
+        "feature_count": 3,
+        "train_accuracy": 0.92,
+        "train_negative_hits": 5,
+        "train_negative_total": 6,
+        "train_false_negative_big": 0,
+        "validation_accuracy": 0.91,
+        "validation_negative_hits": 3,
+        "validation_negative_total": 3,
+        "validation_false_negative_big": 0,
+        "always_positive_validation_accuracy": 0.73,
+    }
+    too_complex = {**accepted, "feature_count": 4}
+    weak_validation = {**accepted, "validation_accuracy": 0.82}
+    misses_stress = {**accepted, "validation_negative_hits": 1}
+
+    assert score_annual_candidate(accepted, score_mode="crisis_stable", field="rejection_reason") == ""
+    assert (
+        score_annual_candidate(too_complex, score_mode="crisis_stable", field="rejection_reason")
+        == "too_many_features"
+    )
+    assert (
+        score_annual_candidate(weak_validation, score_mode="crisis_stable", field="rejection_reason")
+        == "validation_accuracy"
+    )
+    assert (
+        score_annual_candidate(misses_stress, score_mode="crisis_stable", field="rejection_reason")
+        == "misses_validation_stress"
+    )
+
+
+def test_crisis_stable_catalog_can_exclude_fragile_feature_terms() -> None:
+    examples = build_annual_examples(_daily_sample(), start_year=1981, end_year=2020)
+    config = AnnualBeamConfig(
+        stage=0,
+        total_stages=2,
+        seed_pool=40,
+        beam_width=8,
+        generations=1,
+        mutations_per_parent=3,
+        max_features=3,
+        excluded_feature_terms=("santa",),
+    )
+
+    rows = run_annual_beam_search(examples, config)
+
+    assert rows
+    assert "santa" not in ";".join(str(row["specs"]).lower() for row in rows)
+
+
 def test_annual_merge_counts_candidates_evaluated_from_stage_metadata() -> None:
     leaderboard = pd.DataFrame(
         [

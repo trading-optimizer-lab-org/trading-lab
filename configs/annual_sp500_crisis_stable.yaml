@@ -1,0 +1,8 @@
+data_path: data/public/sp500_annual_daily.csv
+output_dir: outputs/annual_sp500_crisis_stable
+start_year: 1980
+end_year: 2025
+score_mode: crisis_stable
+max_features: 3
+excluded_feature_terms:
+  - santa

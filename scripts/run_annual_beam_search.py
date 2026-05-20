@@ -27,6 +27,7 @@ def main() -> int:
     parser.add_argument("--max-features", type=int, default=None)
     parser.add_argument("--score-mode", default=None)
     parser.add_argument("--top-rows-per-stage", type=int, default=None)
+    parser.add_argument("--exclude-feature-contains", action="append", default=[])
     args = parser.parse_args()
 
     output_dir = Path("outputs/annual_sp500_beam")
@@ -51,6 +52,7 @@ def main() -> int:
             mutations_per_parent=args.mutations_per_parent,
             max_features=int(args.max_features or raw_config.get("max_features", 4)),
             score_mode=str(args.score_mode or raw_config.get("score_mode", "validation")),
+            excluded_feature_terms=tuple(args.exclude_feature_contains or raw_config.get("excluded_feature_terms", []) or []),
         )
         rows = run_annual_beam_search(examples, config)
     except Exception as exc:

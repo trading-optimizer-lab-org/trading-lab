@@ -233,6 +233,28 @@ def test_annual_sp500_train_validation_wide_workflow_expands_search() -> None:
     assert "max_features: 6" in config
 
 
+def test_annual_sp500_crisis_stable_workflow_runs_simple_stable_detector() -> None:
+    text = Path(".github/workflows/annual-sp500-crisis-stable.yml").read_text(encoding="utf-8")
+    config = Path("configs/annual_sp500_crisis_stable.yaml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch" in text
+    assert "push:" in text
+    assert ".github/crisis-stable-trigger.txt" in text
+    assert "configs/annual_sp500_crisis_stable.yaml" in text
+    assert "--score-mode crisis_stable" in text
+    assert "--max-features 3" in text
+    assert "--total-stages 64" in text
+    assert "--seed-pool 2500" in text
+    assert "--beam-width 96" in text
+    assert "--generations 16" in text
+    assert "--mutations-per-parent 24" in text
+    assert "--exclude-feature-contains santa" in text
+    assert "annual-sp500-crisis-stable-leaderboard" in text
+    assert "score_mode: crisis_stable" in config
+    assert "max_features: 3" in config
+    assert "santa" in config
+
+
 def test_heavy_workflows_do_not_run_on_push() -> None:
     for path in (
         ".github/workflows/annual-sp500-beam.yml",
