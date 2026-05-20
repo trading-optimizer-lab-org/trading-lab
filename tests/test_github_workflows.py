@@ -165,7 +165,8 @@ def test_annual_sp500_beam_workflow_is_manual_and_keeps_locked_closed() -> None:
     text = Path(".github/workflows/annual-sp500-beam.yml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch" in text
-    assert "push:" not in text
+    assert "push:" in text
+    assert ".github/annual-beam-trigger.txt" in text
     assert "scripts/download_annual_public_data.py" in text
     assert "scripts/audit_annual_features.py" in text
     assert "scripts/run_annual_beam_search.py" in text
