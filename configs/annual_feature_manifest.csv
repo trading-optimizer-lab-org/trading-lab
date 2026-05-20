@@ -1,0 +1,145 @@
+id;bloque;feature;calculo;fuente_gratis;serie_o_ticker;inicio_fuente;gratis_desde_1980;nota
+1;precio_momentum;sp500_return_21d;pct_change(close,21);Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;precio index
+2;precio_momentum;sp500_return_63d;pct_change(close,63);Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;precio index
+3;precio_momentum;sp500_return_126d;pct_change(close,126);Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;precio index
+4;precio_momentum;sp500_return_252d;pct_change(close,252);Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;precio index
+5;precio_momentum;sp500_return_504d;pct_change(close,504);Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;precio index
+6;precio_momentum;sp500_above_sma_50;close>sma(close,50);Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;precio index
+7;precio_momentum;sp500_above_sma_100;close>sma(close,100);Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;precio index
+8;precio_momentum;sp500_above_sma_200;close>sma(close,200);Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;precio index
+9;precio_momentum;sp500_distance_sma_50;close/sma(close,50)-1;Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;precio index
+10;precio_momentum;sp500_distance_sma_200;close/sma(close,200)-1;Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;precio index
+11;precio_momentum;sp500_52w_high_distance;close/rolling_max(close,252)-1;Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;precio index
+12;precio_momentum;sp500_drawdown_current;close/cummax(close)-1;Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;precio index
+13;volatilidad;realized_vol_21d;std(daily_return,21)*sqrt(252);Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;derivada del precio diario
+14;volatilidad;realized_vol_63d;std(daily_return,63)*sqrt(252);Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;derivada del precio diario
+15;volatilidad;realized_vol_126d;std(daily_return,126)*sqrt(252);Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;derivada del precio diario
+16;volatilidad;realized_vol_252d;std(daily_return,252)*sqrt(252);Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;derivada del precio diario
+17;volatilidad;vix_level;VIX close;CBOE o FRED;VIXCLS;1990-01-02;No;no existe gratis desde 1980
+18;volatilidad;vix_change_21d;diff(VIX,21);CBOE o FRED;VIXCLS;1990-01-02;No;no existe gratis desde 1980
+19;volatilidad;vix_percentile_252d;rolling_percentile(VIX,252);CBOE o FRED;VIXCLS;1990-01-02;No;no existe gratis desde 1980
+20;volatilidad;vix_term_structure;VIX3M/VIX;CBOE;VIX3M y VIXCLS;2007-12-04;No;curva VIX no llega a 1980
+21;volatilidad;volatility_spike_dummy;realized_vol_21d > percentile_95_rolling;Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;alternativa 1980 a VIX
+22;volatilidad;realized_vol_minus_vix;realized_vol_21d - VIX;CBOE/FRED + Yahoo/Stooq;VIXCLS + ^GSPC;1990-01-02;No;requiere VIX
+23;valoracion;cape_ratio;price/avg(real_earnings,120m);Robert Shiller Yale;ie_data.xls;1871-01-01;S?;mensual
+24;valoracion;cape_percentile;expanding_percentile(cape_ratio);Robert Shiller Yale;ie_data.xls;1871-01-01;S?;mensual
+25;valoracion;pe_ttm;price/earnings_ttm;Robert Shiller Yale;ie_data.xls;1871-01-01;S?;mensual
+26;valoracion;pe_forward;price/forward_eps;FactSet IBES Bloomberg;no free public series;NA;No;no hay hist?rico gratis fiable desde 1980
+27;valoracion;earnings_yield;earnings_ttm/price;Robert Shiller Yale;ie_data.xls;1871-01-01;S?;mensual
+28;valoracion;dividend_yield;dividend_ttm/price;Robert Shiller Yale;ie_data.xls;1871-01-01;S?;mensual
+29;valoracion;buyback_yield;-net_equity_issuance/market_value_equity;FRED Z.1;NCBCEBQ027S + NCBEILQ027S;1946-10-01;Proxy;proxy de recompras netas
+30;valoracion;shareholder_yield;dividend_yield+buyback_yield_proxy;Shiller + FRED Z.1;ie_data.xls + NCBCEBQ027S;1946-10-01;Proxy;proxy amplio de mercado
+31;valoracion;price_to_book;price/book_value;S&P Capital IQ Bloomberg FactSet;no free public series;NA;No;no gratis fiable desde 1980 para S&P 500
+32;valoracion;price_to_sales;price/sales;S&P Capital IQ Bloomberg FactSet;no free public series;NA;No;no gratis fiable desde 1980 para S&P 500
+33;valoracion;market_cap_to_gdp;total_us_equity_market_cap/GDP;Yahoo Finance/FRED legacy + FRED;^W5000 + GDP;1980-12-31;Proxy;Wilshire 5000 proxy
+34;valoracion;equity_risk_premium;earnings_yield - DGS10/100;Shiller + FRED;ie_data.xls + DGS10;1962-01-02;S?;proxy simple
+35;valoracion;cape_minus_10y_yield;1/cape_ratio - DGS10/100;Shiller + FRED;ie_data.xls + DGS10;1962-01-02;S?;usar earnings yield CAPE
+36;valoracion;earnings_yield_minus_10y_yield;earnings_yield - DGS10/100;Shiller + FRED;ie_data.xls + DGS10;1962-01-02;S?;muy ?til para r?gimen de tipos
+37;tipos_interes;fed_funds_rate;FEDFUNDS;FRED;FEDFUNDS;1954-07-01;S?;mensual
+38;tipos_interes;fed_funds_change_252d;diff(FEDFUNDS,12m);FRED;FEDFUNDS;1954-07-01;S?;mensual
+39;tipos_interes;treasury_3m;TB3MS;FRED;TB3MS;1934-01-01;S?;mensual
+40;tipos_interes;treasury_2y;DGS2;FRED;DGS2;1976-06-01;S?;diario
+41;tipos_interes;treasury_10y;DGS10;FRED;DGS10;1962-01-02;S?;diario
+42;tipos_interes;treasury_30y;DGS30;FRED;DGS30;1977-02-15;S?;diario
+43;tipos_interes;real_10y_yield;DGS10 - CPI_YOY;FRED;DGS10 + CPIAUCSL;1962-01-02;S?;proxy
+44;tipos_interes;real_fed_funds;FEDFUNDS - CPI_YOY;FRED;FEDFUNDS + CPIAUCSL;1954-07-01;S?;mensual
+45;tipos_interes;rate_hike_dummy;FEDFUNDS_12m_change>0;FRED;FEDFUNDS;1954-07-01;S?;r?gimen de subidas
+46;tipos_interes;rate_cut_dummy;FEDFUNDS_12m_change<0;FRED;FEDFUNDS;1954-07-01;S?;r?gimen de bajadas
+47;curva_tipos;spread_10y_3m;DGS10 - TB3MS;FRED;DGS10 + TB3MS;1962-01-02;S?;usar mensual para cubrir 1980
+48;curva_tipos;spread_10y_2y;DGS10 - DGS2;FRED;T10Y2Y o DGS10-DGS2;1976-06-01;S?;diario
+49;curva_tipos;spread_30y_5y;DGS30 - DGS5;FRED;DGS30 + DGS5;1977-02-15;S?;diario
+50;curva_tipos;yield_curve_inverted_dummy;spread_10y_3m<0;FRED;DGS10 + TB3MS;1962-01-02;S?;derivada
+51;curva_tipos;months_since_inversion;months_since(spread_10y_3m<0);FRED;DGS10 + TB3MS;1962-01-02;S?;derivada
+52;curva_tipos;curve_steepening_63d;diff(spread_10y_2y,63);FRED;T10Y2Y;1976-06-01;S?;diario
+53;curva_tipos;curve_steepening_252d;diff(spread_10y_2y,252);FRED;T10Y2Y;1976-06-01;S?;diario
+54;curva_tipos;nyfed_recession_probability;prob_recession_12m_from_10y3m;NY Fed;prob_rec.pdf;1959-01-01;S?;par?metros p?blicos
+55;credito;high_yield_oas;HY OAS;FRED;BAMLH0A0HYM2;1996-12-31;No;no llega a 1980
+56;credito;investment_grade_oas;IG OAS;FRED;BAMLC0A0CM;1996-12-31;No;no llega a 1980
+57;credito;baa_aaa_spread;BAA - AAA;FRED;BAA + AAA;1919-01-01;S?;mejor proxy 1980 de cr?dito
+58;credito;credit_spread_change_21d;diff(BAA-AAA,1m);FRED;BAA + AAA;1919-01-01;S?;mensual
+59;credito;credit_spread_change_63d;diff(BAA-AAA,3m);FRED;BAA + AAA;1919-01-01;S?;mensual
+60;credito;credit_spread_percentile_252d;rolling_percentile(BAA-AAA,12m);FRED;BAA + AAA;1919-01-01;S?;mensual
+61;credito;credit_stress_dummy;BAA-AAA above rolling p90;FRED;BAA + AAA;1919-01-01;S?;mensual
+62;credito;excess_bond_premium;Gilchrist-Zakrajsek EBP;Federal Reserve/Data.gov;EBP dataset;1973-01-01;S?;mensual
+63;inflacion;cpi_yoy;pct_change(CPIAUCSL,12m);FRED;CPIAUCSL;1947-01-01;S?;mensual
+64;inflacion;core_cpi_yoy;pct_change(CPILFESL,12m);FRED;CPILFESL;1957-01-01;S?;mensual
+65;inflacion;pce_yoy;pct_change(PCEPI,12m);FRED;PCEPI;1959-01-01;S?;mensual
+66;inflacion;core_pce_yoy;pct_change(PCEPILFE,12m);FRED;PCEPILFE;1959-01-01;S?;mensual
+67;inflacion;inflation_change_6m;CPI_YOY - lag(CPI_YOY,6m);FRED;CPIAUCSL;1947-01-01;S?;mensual
+68;inflacion;inflation_surprise;actual_CPI - consensus_CPI;Bloomberg/FactSet/Econoday;no free public series;NA;No;consenso hist?rico gratis desde 1980 no fiable
+69;inflacion;breakeven_5y;5y inflation breakeven;FRED;T5YIE;2003-01-02;No;no llega a 1980
+70;inflacion;breakeven_10y;10y inflation breakeven;FRED;T10YIE;2003-01-02;No;no llega a 1980
+71;inflacion;oil_yoy;pct_change(WTI,12m);FRED/EIA;DCOILWTICO;1986-01-02;No;WTI spot diario no llega a 1980
+72;inflacion;gasoline_yoy;pct_change(gasoline_price,12m);FRED/EIA;GASREGW;1990-08-20;No;no llega a 1980
+73;crecimiento;real_gdp_yoy;pct_change(GDPC1,4q);FRED;GDPC1;1947-01-01;S?;trimestral
+74;crecimiento;industrial_production_yoy;pct_change(INDPRO,12m);FRED;INDPRO;1919-01-01;S?;mensual
+75;crecimiento;ism_manufacturing;ISM PMI manufacturing;FRED/ISM;NAPM;1948-01-01;S?;mensual
+76;crecimiento;ism_services;ISM services PMI;ISM/TradingEconomics;no robust free 1980;1997-07-01;No;no llega a 1980
+77;crecimiento;retail_sales_yoy;pct_change(RSAFS,12m);FRED;RSAFS;1992-01-01;No;no llega a 1980
+78;crecimiento;consumer_confidence;UMich sentiment;FRED;UMCSENT;1978-01-01;S?;mensual con retraso
+79;crecimiento;unemployment_rate;UNRATE;FRED;UNRATE;1948-01-01;S?;mensual
+80;crecimiento;unemployment_change_6m;UNRATE - lag(UNRATE,6m);FRED;UNRATE;1948-01-01;S?;mensual
+81;crecimiento;initial_claims_4w_avg;ma(ICSA,4w);FRED;ICSA;1967-01-07;S?;semanal
+82;crecimiento;payrolls_3m_avg;avg(diff(PAYEMS,1m),3m);FRED;PAYEMS;1939-01-01;S?;mensual
+83;crecimiento;lei_yoy;pct_change(leading_index,12m);FRED Philadelphia/OECD;USSLIND;1976-06-01;S?;mensual
+84;crecimiento;recession_dummy;USREC;FRED/NBER;USREC;1854-12-01;S?;solo an?lisis
+85;beneficios;eps_ttm_growth;pct_change(Shiller earnings,12m);Robert Shiller Yale;ie_data.xls;1871-01-01;S?;mensual
+86;beneficios;eps_forward_growth;pct_change(forward_eps,12m);FactSet/IBES/Bloomberg;no free public series;NA;No;no gratis fiable desde 1980
+87;beneficios;eps_revision_1m;forward_eps_now/forward_eps_1m_ago-1;FactSet/IBES/Bloomberg;no free public series;NA;No;revisiones hist?ricas son de pago
+88;beneficios;eps_revision_3m;forward_eps_now/forward_eps_3m_ago-1;FactSet/IBES/Bloomberg;no free public series;NA;No;revisiones hist?ricas son de pago
+89;beneficios;sales_growth_sp500;pct_change(S&P sales/share,12m);S&P Global/FactSet;no free public series;NA;No;no gratis fiable desde 1980
+90;beneficios;profit_margin_sp500;EPS/sales_per_share;S&P Global/FactSet;no free public series;NA;No;no gratis fiable desde 1980
+91;beneficios;margin_change_1y;margin - lag(margin,1y);S&P Global/FactSet;no free public series;NA;No;no gratis fiable desde 1980
+92;beneficios;earnings_surprise_avg;avg(actual_eps/estimate_eps-1);FactSet/IBES/Bloomberg;no free public series;NA;No;sorpresas hist?ricas son de pago
+93;beneficios;guidance_revision;net guidance revisions;FactSet/IBES/Bloomberg;no free public series;NA;No;guidance hist?rico no gratis
+94;beneficios;earnings_breadth;pct_companies_eps_up;FactSet/IBES/Bloomberg;no free public series;NA;No;requiere datos constituent-level hist?ricos
+95;amplitud;percent_sp500_above_50dma;pct constituents close>sma50;Norgate/CRSP paid;SPXA50R;NA;No;exacto desde 1980 requiere constituents hist?ricos
+96;amplitud;percent_sp500_above_200dma;pct constituents close>sma200;Norgate/CRSP paid;SPXA200R;NA;No;exacto desde 1980 requiere constituents hist?ricos
+97;amplitud;advance_decline_line_trend;cum(advancers-decliners) slope;StockCharts/MarketInOut/paid vendors;AD Line;NA;No;hist?rico gratis completo desde 1980 no fiable
+98;amplitud;new_highs_minus_new_lows;new_highs-new_lows;StockCharts/Barchart/paid vendors;NH-NL;NA;No;hist?rico gratis completo desde 1980 no fiable
+99;amplitud;equal_weight_vs_cap_weight_63d;ret(SP500EW,63)-ret(SP500,63);S&P/Yahoo;^SPXEW;2003-01-08;No;?ndice equal weight lanzado en 2003
+100;amplitud;small_caps_vs_sp500_63d;ret(small_caps,63)-ret(sp500,63);Ken French Data Library;SMB factor;1926-07-01;Proxy;proxy gratis mejor que Russell para 1980
+101;amplitud;cyclicals_vs_defensives_63d;ret(cyclicals,63)-ret(defensives,63);Ken French Data Library;49 Industry Portfolios;1926-07-01;Proxy;construir c?clicas y defensivas por industrias
+102;amplitud;sector_dispersion;stdev(industry_returns,1m);Ken French Data Library;49 Industry Portfolios;1926-07-01;Proxy;proxy sectorial gratis
+103;amplitud;top_10_weight_sp500;sum(weight top 10);S&P Global/FactSet/Bloomberg;no free public series;NA;No;hist?rico exacto no gratis
+104;amplitud;magnificent_7_weight;sum(weight M7);S&P Global/FactSet/Bloomberg;no free public series;NA;No;hist?rico exacto no gratis
+105;sentimiento_posicionamiento;aaii_bull_bear_spread;bullish - bearish;AAII;AAII Sentiment Survey;1987-07-24;No;no llega a 1980
+106;sentimiento_posicionamiento;investors_intelligence_bulls;bulls %;Yardeni/Investors Intelligence;paid series;NA;No;hist?rico ?til es de pago
+107;sentimiento_posicionamiento;put_call_ratio;put_volume/call_volume;CBOE;Total Put/Call Ratio;2006-11-01;No;no llega a 1980
+108;sentimiento_posicionamiento;equity_fund_flows_4w;4w sum equity fund flows;ICI;long-term mutual fund flows;2007-01-01;No;no 1980 completo gratis
+109;sentimiento_posicionamiento;money_market_assets;MMMF total assets;FRED;MMMFFAQ027S;1945-10-01;S?;trimestral
+110;sentimiento_posicionamiento;margin_debt_yoy;pct_change(margin_debt,12m);FINRA;margin-statistics.xlsx;1997-01-01;No;FINRA gratis empieza 1997
+111;sentimiento_posicionamiento;short_interest_sp500;aggregate_short_interest;FINRA/S&P paid vendors;no free public series;NA;No;hist?rico completo no gratis
+112;sentimiento_posicionamiento;cftc_sp500_positioning;noncommercial net positions;CFTC;Legacy COT futures-only;1986-01-15;No;no llega a 1980
+113;sentimiento_posicionamiento;news_sentiment;news sentiment index;RavenPack/Refinitiv/News APIs;no free public series;NA;No;no gratis fiable desde 1980
+114;sentimiento_posicionamiento;google_trends_recession;search interest recession;Google Trends;recession topic;2004-01-01;No;Google Trends empieza en 2004
+115;liquidez_condiciones;financial_conditions_index;NFCI;FRED/Chicago Fed;NFCI;1971-01-08;S?;semanal
+116;liquidez_condiciones;stl_fed_stress_index;STLFSI4;FRED/St Louis Fed;STLFSI4;1993-12-31;No;no llega a 1980
+117;liquidez_condiciones;ofr_financial_stress_index;OFR FSI;OFR;OFR FSI;2000-01-03;No;no llega a 1980
+118;liquidez_condiciones;fed_balance_sheet_yoy;pct_change(WALCL,52w);FRED;WALCL;2002-12-18;No;no llega a 1980
+119;liquidez_condiciones;m2_yoy;pct_change(M2SL,12m);FRED;M2SL;1959-01-01;S?;mensual
+120;liquidez_condiciones;bank_lending_standards;SLOOS tightening standards;FRED/Fed SLOOS;DRTSCILM;1990-04-01;No;no llega a 1980
+121;liquidez_condiciones;commercial_bank_credit_yoy;pct_change(TOTBKCR,52w);FRED;TOTBKCR;1973-01-03;S?;semanal
+122;liquidez_condiciones;reverse_repo_level;RRPONTSYD;FRED;RRPONTSYD;2003-02-07;No;no llega a 1980
+123;liquidez_condiciones;treasury_general_account;TGA;FRED;WDTGAL;1986-01-08;No;no llega a 1980
+124;liquidez_condiciones;dollar_liquidity_proxy;M2 + Fed assets - TGA - RRP;FRED;M2SL + WALCL + WDTGAL + RRPONTSYD;2003-02-07;No;completo no llega a 1980
+125;dolar_commodities_externo;dxy_return_252d;pct_change(trade_weighted_usd,12m);FRED;TWEXBMTH hasta 2019 + DTWEXBGS desde 2006;1973-01-01;S?;empalmar series
+126;dolar_commodities_externo;dxy_change_63d;change(trade_weighted_usd,3m);FRED;TWEXBMTH hasta 2019 + DTWEXBGS desde 2006;1973-01-01;S?;mensual
+127;dolar_commodities_externo;oil_return_252d;pct_change(WTI,12m);FRED/EIA;DCOILWTICO;1986-01-02;No;WTI spot no llega a 1980
+128;dolar_commodities_externo;gold_return_252d;pct_change(gold,12m);FRED/LBMA;GOLDPMGBD228NLBM;1968-04-01;S?;diario
+129;dolar_commodities_externo;copper_return_252d;pct_change(copper,12m);FRED/IMF;PCOPPUSDM;1992-01-01;No;no llega a 1980
+130;dolar_commodities_externo;copper_gold_ratio;copper/gold;FRED;PCOPPUSDM + GOLDPMGBD228NLBM;1992-01-01;No;no llega a 1980
+131;dolar_commodities_externo;em_equities_vs_sp500;ret(EM,12m)-ret(SP500,12m);MSCI/Yahoo ETF;EEM or MSCI EM;2003-04-14;No;ETF EM no llega a 1980
+132;dolar_commodities_externo;global_equities_ex_us;ret(global ex US,12m);MSCI/Yahoo ETF;EFA/ACWX proxy;2001-08-14;No;ETF/proxy no llega a 1980
+133;dolar_commodities_externo;us_bonds_return_252d;approx bond total return from yield duration;FRED;DGS10;1962-01-02;Proxy;no total return exacto
+134;dolar_commodities_externo;stocks_vs_bonds_252d;sp500_return_252d - bond_return_252d_proxy;Yahoo/Stooq + FRED;^GSPC + DGS10;1962-01-02;Proxy;proxy suficiente para r?gimen
+135;estacionalidad_ciclo;month_number;month(date);Calendario;date;1789-04-30;S?;derivada de fecha
+136;estacionalidad_ciclo;quarter_number;quarter(date);Calendario;date;1789-04-30;S?;derivada de fecha
+137;estacionalidad_ciclo;presidential_cycle_year;year_in_us_presidential_cycle(date);Calendario electoral;date;1789-04-30;S?;derivada de calendario electoral
+138;estacionalidad_ciclo;midterm_year_dummy;presidential_cycle_year==2;Calendario electoral;date;1789-04-30;S?;derivada de calendario electoral
+139;estacionalidad_ciclo;election_year_dummy;presidential_cycle_year==4;Calendario electoral;date;1789-04-30;S?;derivada de calendario electoral
+140;estacionalidad_ciclo;january_return;return during January;Yahoo/Stooq/Shiller;^GSPC + ie_data.xls;1871-01-01;S?;derivada de precio SP500
+141;estacionalidad_ciclo;first_5_days_return;return first 5 trading days;Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;derivada de precio SP500
+142;estacionalidad_ciclo;santa_rally_return;return last 5 trading days + first 2 trading days;Yahoo Finance o Stooq;^GSPC o ^SPX;1927-12-30;S?;derivada de precio SP500
+143;estacionalidad_ciclo;year_after_negative_year;previous_calendar_year_return<0;Shiller/Yahoo/Stooq;ie_data.xls + ^GSPC;1871-01-01;S?;usar total return si puedes
+144;estacionalidad_ciclo;consecutive_positive_years;count consecutive positive calendar years;Shiller/Yahoo/Stooq;ie_data.xls + ^GSPC;1871-01-01;S?;usar total return si puedes

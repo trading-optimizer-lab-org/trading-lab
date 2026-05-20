@@ -6,6 +6,7 @@ from trading_lab.annual_prediction import (
     AnnualBeamConfig,
     AnnualCandidate,
     build_annual_examples,
+    load_annual_feature_manifest,
     evaluate_annual_candidate,
     run_annual_beam_search,
 )
@@ -63,6 +64,24 @@ def test_build_annual_examples_adds_political_and_valuation_features() -> None:
     assert examples.loc[examples["target_year"] == 1984, "is_election_year"].iloc[0] == 1
     assert examples.loc[examples["target_year"] == 1981, "is_post_election_year"].iloc[0] == 1
     assert examples["cape"].notna().all()
+
+
+def test_annual_feature_manifest_contains_requested_144_features() -> None:
+    manifest = load_annual_feature_manifest()
+
+    assert len(manifest) == 144
+    assert manifest["feature"].is_unique
+    assert "sp500_return_21d" in set(manifest["feature"])
+    assert "consecutive_positive_years" in set(manifest["feature"])
+
+
+def test_build_annual_examples_exposes_requested_manifest_columns() -> None:
+    examples = build_annual_examples(_daily_sample(), start_year=1981, end_year=1984)
+    manifest = load_annual_feature_manifest()
+
+    missing = sorted(set(manifest["feature"]) - set(examples.columns))
+
+    assert missing == []
 
 
 def test_annual_candidate_evaluates_train_and_validation_without_locked() -> None:

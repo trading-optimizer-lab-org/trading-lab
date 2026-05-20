@@ -15,20 +15,57 @@ from trading_lab.public_data import _download_fred_series, download_yahoo_chart,
 
 FRED_ANNUAL_SERIES = {
     "fed_funds": "DFF",
+    "fed_funds_monthly": "FEDFUNDS",
+    "treasury_3m": "TB3MS",
     "yield_2y": "DGS2",
+    "yield_5y": "DGS5",
     "yield_10y": "DGS10",
     "yield_30y": "DGS30",
     "curve_10y_2y": "T10Y2Y",
     "hy_oas": "BAMLH0A0HYM2",
     "ig_oas": "BAMLC0A0CM",
+    "baa": "BAA",
+    "aaa": "AAA",
+    "excess_bond_premium": "EBP",
     "unemployment": "UNRATE",
     "cpi": "CPIAUCSL",
+    "core_cpi": "CPILFESL",
+    "pce": "PCEPI",
+    "core_pce": "PCEPILFE",
+    "breakeven_5y": "T5YIE",
+    "breakeven_10y": "T10YIE",
+    "gasoline_yoy_source": "GASREGW",
     "industrial_production": "INDPRO",
+    "real_gdp": "GDPC1",
+    "ism_manufacturing": "NAPM",
+    "retail_sales_yoy_source": "RSAFS",
+    "consumer_confidence": "UMCSENT",
+    "initial_claims": "ICSA",
+    "payrolls": "PAYEMS",
+    "lei": "USSLIND",
+    "recession_dummy": "USREC",
+    "money_market_assets": "MMMFFAQ027S",
+    "financial_conditions_index": "NFCI",
+    "bank_lending_standards": "DRTSCILM",
+    "fed_balance_sheet": "WALCL",
     "financial_stress": "STLFSI4",
+    "m2": "M2SL",
+    "commercial_bank_credit": "TOTBKCR",
+    "reverse_repo_level": "RRPONTSYD",
+    "treasury_general_account": "WDTGAL",
+    "dxy_proxy": "TWEXBMTH",
+    "gold": "GOLDPMGBD228NLBM",
+    "oil": "DCOILWTICO",
+    "copper": "PCOPPUSDM",
+    "gdp": "GDP",
+    "wilshire_5000": "WILL5000INDFC",
+    "net_equity_issuance_proxy": "NCBEILQ027S",
+    "market_value_equity_proxy": "NCBCEBQ027S",
 }
 
 YAHOO_FEATURE_SYMBOLS = {
     "vix": "^VIX",
+    "vix3m": "^VIX3M",
     "russell_2000": "^RUT",
 }
 
@@ -89,8 +126,14 @@ def build_annual_public_data(output: str | Path) -> Path:
         pass
     if {"hy_oas", "ig_oas"}.issubset(panel.columns):
         panel["hy_minus_ig_oas"] = panel["hy_oas"] - panel["ig_oas"]
+    if {"baa", "aaa"}.issubset(panel.columns):
+        panel["baa_aaa_spread"] = panel["baa"] - panel["aaa"]
     if {"yield_10y", "yield_2y"}.issubset(panel.columns):
         panel["yield_10y_minus_2y"] = panel["yield_10y"] - panel["yield_2y"]
+    if {"wilshire_5000", "gdp"}.issubset(panel.columns):
+        panel["market_cap_to_gdp"] = panel["wilshire_5000"] / panel["gdp"]
+    if {"net_equity_issuance_proxy", "market_value_equity_proxy"}.issubset(panel.columns):
+        panel["buyback_yield"] = -panel["net_equity_issuance_proxy"] / panel["market_value_equity_proxy"]
     panel = panel.reset_index(drop=True)
     return write_public_data(panel, output)
 
@@ -110,6 +153,8 @@ def _download_shiller_valuation_data() -> pd.DataFrame:
         earnings = pd.to_numeric(raw["earnings"], errors="coerce")
         price = pd.to_numeric(raw["sp500"], errors="coerce")
         frame["earnings_yield"] = earnings / price
+        frame["pe_ttm"] = price / earnings.replace(0, pd.NA)
+        frame["eps_ttm"] = earnings
     if {"dividend", "sp500"}.issubset(raw.columns):
         dividend = pd.to_numeric(raw["dividend"], errors="coerce")
         price = pd.to_numeric(raw["sp500"], errors="coerce")

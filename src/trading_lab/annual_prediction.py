@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from itertools import combinations
 from math import isfinite
+from pathlib import Path
 from typing import Iterable
 
 import numpy as np
@@ -14,6 +14,7 @@ TRAIN_END_YEAR = 2004
 VALIDATION_START_YEAR = 2005
 VALIDATION_END_YEAR = 2015
 LOCKED_START_YEAR = 2016
+MANIFEST_PATH = Path(__file__).resolve().parents[2] / "configs" / "annual_feature_manifest.csv"
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ def build_annual_examples(
             "spy_return_next_year": spy_return,
             "target_positive": bool(spy_return > 0.0),
             **_political_features(target_year),
+            **_calendar_cycle_features(data, target_year),
         }
         for name, value in feature_row.items():
             row[name] = float(value) if pd.notna(value) else np.nan
@@ -66,7 +68,17 @@ def build_annual_examples(
     if not examples.empty:
         examples["decision_date"] = pd.to_datetime(examples["decision_date"])
         examples["target_positive"] = examples["target_positive"].astype(bool)
+    examples = _ensure_manifest_columns(examples)
     return examples.replace([np.inf, -np.inf], np.nan)
+
+
+def load_annual_feature_manifest(path: str | Path = MANIFEST_PATH) -> pd.DataFrame:
+    manifest = pd.read_csv(path, sep=";")
+    expected = {"id", "bloque", "feature", "calculo", "fuente_gratis", "serie_o_ticker", "inicio_fuente", "gratis_desde_1980", "nota"}
+    missing = expected - set(manifest.columns)
+    if missing:
+        raise ValueError(f"annual feature manifest missing columns: {sorted(missing)}")
+    return manifest
 
 
 def evaluate_annual_candidate(
@@ -180,7 +192,31 @@ def _normalize_daily(daily: pd.DataFrame) -> pd.DataFrame:
 
 def _build_daily_feature_frame(data: pd.DataFrame) -> pd.DataFrame:
     close = pd.to_numeric(data["close"], errors="coerce")
+    daily_return = close.pct_change()
+    sma_50 = close.rolling(50, min_periods=20).mean()
+    sma_100 = close.rolling(100, min_periods=50).mean()
+    sma_200 = close.rolling(200, min_periods=100).mean()
+    realized_vol_21d = daily_return.rolling(21, min_periods=10).std(ddof=0) * np.sqrt(252.0)
     out: dict[str, pd.Series] = {
+        "sp500_return_21d": close.pct_change(21),
+        "sp500_return_63d": close.pct_change(63),
+        "sp500_return_126d": close.pct_change(126),
+        "sp500_return_252d": close.pct_change(252),
+        "sp500_return_504d": close.pct_change(504),
+        "sp500_above_sma_50": (close > sma_50).astype(float),
+        "sp500_above_sma_100": (close > sma_100).astype(float),
+        "sp500_above_sma_200": (close > sma_200).astype(float),
+        "sp500_distance_sma_50": close / sma_50 - 1.0,
+        "sp500_distance_sma_200": close / sma_200 - 1.0,
+        "sp500_52w_high_distance": close / close.rolling(252, min_periods=63).max() - 1.0,
+        "sp500_drawdown_current": close / close.cummax() - 1.0,
+        "realized_vol_21d": realized_vol_21d,
+        "realized_vol_63d": daily_return.rolling(63, min_periods=21).std(ddof=0) * np.sqrt(252.0),
+        "realized_vol_126d": daily_return.rolling(126, min_periods=42).std(ddof=0) * np.sqrt(252.0),
+        "realized_vol_252d": daily_return.rolling(252, min_periods=63).std(ddof=0) * np.sqrt(252.0),
+        "volatility_spike_dummy": (
+            realized_vol_21d > realized_vol_21d.rolling(252, min_periods=63).quantile(0.95)
+        ).astype(float),
         "spy_return_3m": close.pct_change(63),
         "spy_return_6m": close.pct_change(126),
         "spy_return_12m": close.pct_change(252),
@@ -189,6 +225,7 @@ def _build_daily_feature_frame(data: pd.DataFrame) -> pd.DataFrame:
         "spy_vol_12m": close.pct_change().rolling(252, min_periods=63).std(ddof=0),
         "spy_drawdown_12m": close / close.rolling(252, min_periods=63).max() - 1.0,
     }
+    _add_named_feature_aliases(out, data, close)
     skip = {"open", "high", "low", "close", "volume"}
     for column in data.columns:
         if column in skip:
@@ -204,6 +241,178 @@ def _build_daily_feature_frame(data: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(out, index=data.index)
 
 
+def _add_named_feature_aliases(out: dict[str, pd.Series], data: pd.DataFrame, close: pd.Series) -> None:
+    aliases = {
+        "vix_level": "vix_level",
+        "vix3m_level": "vix3m_level",
+        "cape_ratio": "cape",
+        "pe_ttm": "pe_ttm",
+        "earnings_yield": "earnings_yield",
+        "dividend_yield": "dividend_yield",
+        "buyback_yield": "buyback_yield",
+        "market_cap_to_gdp": "market_cap_to_gdp",
+        "fed_funds_rate": "fed_funds",
+        "treasury_3m": "treasury_3m",
+        "treasury_2y": "yield_2y",
+        "yield_5y": "yield_5y",
+        "treasury_10y": "yield_10y",
+        "treasury_30y": "yield_30y",
+        "high_yield_oas": "hy_oas",
+        "investment_grade_oas": "ig_oas",
+        "baa_aaa_spread": "baa_aaa_spread",
+        "excess_bond_premium": "excess_bond_premium",
+        "consumer_confidence": "consumer_confidence",
+        "unemployment_rate": "unemployment",
+        "ism_manufacturing": "ism_manufacturing",
+        "recession_dummy": "recession_dummy",
+        "money_market_assets": "money_market_assets",
+        "financial_conditions_index": "financial_conditions_index",
+        "stl_fed_stress_index": "financial_stress",
+    }
+    for target, source in aliases.items():
+        if source in data:
+            out[target] = pd.to_numeric(data[source], errors="coerce")
+    if "vix_level" in out:
+        out["vix_change_21d"] = out["vix_level"].diff(21)
+        out["vix_percentile_252d"] = _rolling_percentile(out["vix_level"], 252)
+        out["realized_vol_minus_vix"] = out["realized_vol_21d"] - out["vix_level"] / 100.0
+    if "vix3m_level" in out and "vix_level" in out:
+        out["vix_term_structure"] = out["vix3m_level"] / out["vix_level"]
+    if "cape_ratio" in out:
+        out["cape_percentile"] = _expanding_percentile(out["cape_ratio"])
+        out["cape_minus_10y_yield"] = 1.0 / out["cape_ratio"] - _rate_to_decimal(out.get("treasury_10y"))
+    if "earnings_yield" in out and "treasury_10y" in out:
+        out["equity_risk_premium"] = out["earnings_yield"] - _rate_to_decimal(out["treasury_10y"])
+        out["earnings_yield_minus_10y_yield"] = out["earnings_yield"] - _rate_to_decimal(out["treasury_10y"])
+    if "dividend_yield" in out and "buyback_yield" in out:
+        out["shareholder_yield"] = out["dividend_yield"] + out["buyback_yield"]
+    _add_macro_features(out, data)
+    _add_rate_features(out)
+    _add_credit_features(out)
+    _add_external_features(out, data, close)
+
+
+def _add_rate_features(out: dict[str, pd.Series]) -> None:
+    fed = out.get("fed_funds_rate")
+    ten = out.get("treasury_10y")
+    three_month = out.get("treasury_3m")
+    two = out.get("treasury_2y")
+    thirty = out.get("treasury_30y")
+    five = out.get("yield_5y")
+    cpi_yoy = out.get("cpi_yoy")
+    if fed is not None:
+        out["fed_funds_change_252d"] = fed.diff(252)
+        out["rate_hike_dummy"] = (fed.diff(252) > 0).astype(float)
+        out["rate_cut_dummy"] = (fed.diff(252) < 0).astype(float)
+        if cpi_yoy is not None:
+            out["real_fed_funds"] = fed - cpi_yoy * 100.0
+    if ten is not None:
+        if cpi_yoy is not None:
+            out["real_10y_yield"] = ten - cpi_yoy * 100.0
+        if three_month is not None:
+            out["spread_10y_3m"] = ten - three_month
+            out["yield_curve_inverted_dummy"] = (out["spread_10y_3m"] < 0).astype(float)
+            out["months_since_inversion"] = _periods_since(out["spread_10y_3m"] < 0)
+            out["nyfed_recession_probability"] = _nyfed_recession_probability(out["spread_10y_3m"])
+        if two is not None:
+            out["spread_10y_2y"] = ten - two
+            out["curve_steepening_63d"] = out["spread_10y_2y"].diff(63)
+            out["curve_steepening_252d"] = out["spread_10y_2y"].diff(252)
+    if thirty is not None and five is not None:
+        out["spread_30y_5y"] = thirty - five
+
+
+def _add_credit_features(out: dict[str, pd.Series]) -> None:
+    spread = out.get("baa_aaa_spread")
+    if spread is None:
+        return
+    out["credit_spread_change_21d"] = spread.diff(21)
+    out["credit_spread_change_63d"] = spread.diff(63)
+    out["credit_spread_percentile_252d"] = _rolling_percentile(spread, 252)
+    out["credit_stress_dummy"] = (spread > spread.rolling(252, min_periods=63).quantile(0.90)).astype(float)
+
+
+def _add_macro_features(out: dict[str, pd.Series], data: pd.DataFrame) -> None:
+    cpi = pd.to_numeric(data["cpi"], errors="coerce") if "cpi" in data else None
+    core_cpi = pd.to_numeric(data["core_cpi"], errors="coerce") if "core_cpi" in data else None
+    pce = pd.to_numeric(data["pce"], errors="coerce") if "pce" in data else None
+    core_pce = pd.to_numeric(data["core_pce"], errors="coerce") if "core_pce" in data else None
+    if cpi is not None:
+        out["cpi_yoy"] = cpi.pct_change(252)
+        out["inflation_change_6m"] = out["cpi_yoy"] - out["cpi_yoy"].shift(126)
+    if core_cpi is not None:
+        out["core_cpi_yoy"] = core_cpi.pct_change(252)
+    if pce is not None:
+        out["pce_yoy"] = pce.pct_change(252)
+    if core_pce is not None:
+        out["core_pce_yoy"] = core_pce.pct_change(252)
+    if "industrial_production" in data:
+        out["industrial_production_yoy"] = pd.to_numeric(data["industrial_production"], errors="coerce").pct_change(252)
+    if "real_gdp" in data:
+        out["real_gdp_yoy"] = pd.to_numeric(data["real_gdp"], errors="coerce").pct_change(252)
+    if "unemployment" in data:
+        unrate = pd.to_numeric(data["unemployment"], errors="coerce")
+        out["unemployment_rate"] = unrate
+        out["unemployment_change_6m"] = unrate - unrate.shift(126)
+    if "initial_claims" in data:
+        out["initial_claims_4w_avg"] = pd.to_numeric(data["initial_claims"], errors="coerce").rolling(20, min_periods=4).mean()
+    if "payrolls" in data:
+        payrolls = pd.to_numeric(data["payrolls"], errors="coerce")
+        out["payrolls_3m_avg"] = payrolls.diff(21).rolling(63, min_periods=21).mean()
+    if "retail_sales_yoy_source" in data:
+        out["retail_sales_yoy"] = pd.to_numeric(data["retail_sales_yoy_source"], errors="coerce").pct_change(252)
+    if "gasoline_yoy_source" in data:
+        out["gasoline_yoy"] = pd.to_numeric(data["gasoline_yoy_source"], errors="coerce").pct_change(252)
+    if "lei" in data:
+        out["lei_yoy"] = pd.to_numeric(data["lei"], errors="coerce").pct_change(252)
+    if "eps_ttm" in data:
+        out["eps_ttm_growth"] = pd.to_numeric(data["eps_ttm"], errors="coerce").pct_change(252)
+    if "m2" in data:
+        out["m2_yoy"] = pd.to_numeric(data["m2"], errors="coerce").pct_change(252)
+    if "fed_balance_sheet" in data:
+        out["fed_balance_sheet_yoy"] = pd.to_numeric(data["fed_balance_sheet"], errors="coerce").pct_change(252)
+    if "commercial_bank_credit" in data:
+        out["commercial_bank_credit_yoy"] = pd.to_numeric(data["commercial_bank_credit"], errors="coerce").pct_change(252)
+    if {"m2", "fed_balance_sheet", "treasury_general_account", "reverse_repo_level"}.issubset(data.columns):
+        out["dollar_liquidity_proxy"] = (
+            pd.to_numeric(data["m2"], errors="coerce")
+            + pd.to_numeric(data["fed_balance_sheet"], errors="coerce")
+            - pd.to_numeric(data["treasury_general_account"], errors="coerce")
+            - pd.to_numeric(data["reverse_repo_level"], errors="coerce")
+        )
+
+
+def _add_external_features(out: dict[str, pd.Series], data: pd.DataFrame, close: pd.Series) -> None:
+    if "dxy_proxy" in data:
+        dxy = pd.to_numeric(data["dxy_proxy"], errors="coerce")
+        out["dxy_return_252d"] = dxy.pct_change(252)
+        out["dxy_change_63d"] = dxy.diff(63)
+    if "gold" in data:
+        out["gold_return_252d"] = pd.to_numeric(data["gold"], errors="coerce").pct_change(252)
+    if "oil" in data:
+        out["oil_yoy"] = pd.to_numeric(data["oil"], errors="coerce").pct_change(252)
+        out["oil_return_252d"] = out["oil_yoy"]
+    if "copper" in data:
+        out["copper_return_252d"] = pd.to_numeric(data["copper"], errors="coerce").pct_change(252)
+        if "gold" in data:
+            out["copper_gold_ratio"] = pd.to_numeric(data["copper"], errors="coerce") / pd.to_numeric(data["gold"], errors="coerce")
+    if "treasury_10y" in out:
+        duration = 7.0
+        rate = _rate_to_decimal(out["treasury_10y"])
+        out["us_bonds_return_252d"] = rate.shift(252) - duration * rate.diff(252)
+        out["stocks_vs_bonds_252d"] = close.pct_change(252) - out["us_bonds_return_252d"]
+
+
+def _ensure_manifest_columns(examples: pd.DataFrame) -> pd.DataFrame:
+    missing = {}
+    for feature in load_annual_feature_manifest()["feature"]:
+        if feature not in examples.columns:
+            missing[feature] = np.nan
+    if missing:
+        examples = pd.concat([examples, pd.DataFrame(missing, index=examples.index)], axis=1)
+    return examples.copy()
+
+
 def _political_features(target_year: int) -> dict[str, float]:
     cycle_year = ((target_year - 1981) % 4) + 1
     president_party = _president_party(target_year)
@@ -213,12 +422,56 @@ def _political_features(target_year: int) -> dict[str, float]:
         "presidential_cycle_year": float(cycle_year),
         "is_election_year": float(cycle_year == 4),
         "is_post_election_year": float(cycle_year == 1),
+        "midterm_year_dummy": float(cycle_year == 2),
+        "election_year_dummy": float(cycle_year == 4),
         "president_party": float(president_party),
         "house_control_party": float(house_party),
         "senate_control_party": float(senate_party),
         "split_congress": float(house_party != senate_party),
         "unified_government": float(house_party == senate_party == president_party),
     }
+
+
+def _calendar_cycle_features(data: pd.DataFrame, target_year: int) -> dict[str, float]:
+    source_year = target_year - 1
+    source = data.loc[data.index.year == source_year]
+    prior = data.loc[data.index.year == source_year - 1]
+    features = {
+        "month_number": 12.0,
+        "quarter_number": 4.0,
+        "january_return": np.nan,
+        "first_5_days_return": np.nan,
+        "santa_rally_return": np.nan,
+        "year_after_negative_year": np.nan,
+        "consecutive_positive_years": np.nan,
+    }
+    if not source.empty:
+        january = source.loc[source.index.month == 1]
+        if len(january) >= 2:
+            features["january_return"] = float(january["close"].iloc[-1] / january["close"].iloc[0] - 1.0)
+        first_days = source.iloc[:5]
+        if len(first_days) >= 2:
+            features["first_5_days_return"] = float(first_days["close"].iloc[-1] / first_days["close"].iloc[0] - 1.0)
+    if not prior.empty and not source.empty:
+        santa_piece = pd.concat([prior.iloc[-5:], source.iloc[:2]])
+        if len(santa_piece) >= 2:
+            features["santa_rally_return"] = float(santa_piece["close"].iloc[-1] / santa_piece["close"].iloc[0] - 1.0)
+    features["year_after_negative_year"] = float(_calendar_year_return(data, source_year) < 0.0)
+    count = 0
+    for year in range(source_year, int(data.index.min().year) - 1, -1):
+        year_return = _calendar_year_return(data, year)
+        if pd.isna(year_return) or year_return <= 0.0:
+            break
+        count += 1
+    features["consecutive_positive_years"] = float(count)
+    return features
+
+
+def _calendar_year_return(data: pd.DataFrame, year: int) -> float:
+    frame = data.loc[data.index.year == year]
+    if len(frame) < 2:
+        return np.nan
+    return float(frame["close"].iloc[-1] / frame["close"].iloc[0] - 1.0)
 
 
 def _president_party(year: int) -> int:
@@ -429,3 +682,38 @@ def _candidate_id(candidate: AnnualCandidate) -> str:
 def _signature(specs: str) -> str:
     names = sorted({part.split("|", 1)[0] for part in specs.split(";") if part})
     return ";".join(names[:4])
+
+
+def _rolling_percentile(series: pd.Series, window: int) -> pd.Series:
+    return series.rolling(window, min_periods=max(20, window // 4)).rank(pct=True)
+
+
+def _expanding_percentile(series: pd.Series) -> pd.Series:
+    return series.expanding(min_periods=20).rank(pct=True)
+
+
+def _rate_to_decimal(series: pd.Series | None) -> pd.Series:
+    if series is None:
+        return pd.Series(dtype=float)
+    return pd.to_numeric(series, errors="coerce") / 100.0
+
+
+def _periods_since(condition: pd.Series) -> pd.Series:
+    output = []
+    last_seen = None
+    for index, value in enumerate(condition.fillna(False).astype(bool)):
+        if value:
+            last_seen = index
+            output.append(0.0)
+        elif last_seen is None:
+            output.append(np.nan)
+        else:
+            output.append(float(index - last_seen))
+    return pd.Series(output, index=condition.index)
+
+
+def _nyfed_recession_probability(spread_10y_3m: pd.Series) -> pd.Series:
+    # Simple public-parameter proxy: inverted/flat curves imply higher 12m recession risk.
+    spread = pd.to_numeric(spread_10y_3m, errors="coerce")
+    z = -0.6 - 0.9 * spread
+    return 1.0 / (1.0 + np.exp(-z))
