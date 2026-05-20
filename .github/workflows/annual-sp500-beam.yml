@@ -30,11 +30,20 @@ jobs:
         run: python -m pip install -e ".[dev]"
       - name: Download annual public data
         run: python scripts/download_annual_public_data.py --output data/public/sp500_annual_daily.csv
+      - name: Audit annual feature coverage
+        run: python scripts/audit_annual_features.py --config "${{ github.event.inputs.config || 'configs/annual_sp500_beam.yaml' }}" --output outputs/annual_sp500_beam/annual_feature_coverage.csv --summary outputs/annual_sp500_beam/annual_feature_coverage_summary.json
       - name: Upload annual panel
         uses: actions/upload-artifact@v4
         with:
           name: annual-sp500-public-panel
           path: data/public/sp500_annual_daily.csv
+      - name: Upload annual feature audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: annual-sp500-feature-audit
+          path: |
+            outputs/annual_sp500_beam/annual_feature_coverage.csv
+            outputs/annual_sp500_beam/annual_feature_coverage_summary.json
 
   annual-beam:
     runs-on: ubuntu-latest

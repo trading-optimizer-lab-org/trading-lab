@@ -5,6 +5,7 @@ import pandas as pd
 from trading_lab.annual_prediction import (
     AnnualBeamConfig,
     AnnualCandidate,
+    audit_annual_feature_coverage,
     build_annual_examples,
     load_annual_feature_manifest,
     evaluate_annual_candidate,
@@ -82,6 +83,17 @@ def test_build_annual_examples_exposes_requested_manifest_columns() -> None:
     missing = sorted(set(manifest["feature"]) - set(examples.columns))
 
     assert missing == []
+
+
+def test_audit_annual_feature_coverage_marks_usable_and_unusable_features() -> None:
+    examples = build_annual_examples(_daily_sample(), start_year=1981, end_year=2008)
+
+    audit = audit_annual_feature_coverage(examples)
+
+    assert len(audit) == 144
+    assert {"feature", "quality", "usable_in_beam", "first_usable_year"}.issubset(audit.columns)
+    assert audit.loc[audit["feature"] == "sp500_return_21d", "usable_in_beam"].iloc[0] in {True, False}
+    assert audit.loc[audit["feature"] == "pe_forward", "quality"].iloc[0] == "sin_datos_publicos_fiables"
 
 
 def test_annual_candidate_evaluates_train_and_validation_without_locked() -> None:

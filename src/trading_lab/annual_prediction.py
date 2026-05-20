@@ -132,6 +132,37 @@ def evaluate_annual_candidate(
     return row
 
 
+def audit_annual_feature_coverage(examples: pd.DataFrame) -> pd.DataFrame:
+    manifest = load_annual_feature_manifest()
+    rows: list[dict[str, object]] = []
+    for item in manifest.to_dict("records"):
+        feature = str(item["feature"])
+        series = pd.to_numeric(examples.get(feature, pd.Series(index=examples.index, dtype=float)), errors="coerce")
+        non_null = series.notna()
+        years = examples.loc[non_null, "target_year"].astype(int) if "target_year" in examples else pd.Series(dtype=int)
+        train = examples["target_year"].astype(int) <= TRAIN_END_YEAR
+        validation = (examples["target_year"].astype(int) >= VALIDATION_START_YEAR) & (
+            examples["target_year"].astype(int) <= VALIDATION_END_YEAR
+        )
+        usable = _feature_usable_for_beam(series, examples)
+        rows.append(
+            {
+                **item,
+                "non_null_years": int(non_null.sum()),
+                "total_years": int(len(examples)),
+                "coverage": float(non_null.mean()) if len(examples) else 0.0,
+                "first_usable_year": int(years.min()) if not years.empty else None,
+                "last_usable_year": int(years.max()) if not years.empty else None,
+                "train_non_null_years": int(non_null[train].sum()),
+                "validation_non_null_years": int(non_null[validation].sum()),
+                "unique_train_values": int(series[train].nunique(dropna=True)),
+                "quality": _feature_quality(item, non_null, examples),
+                "usable_in_beam": bool(usable),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def annual_score(row: dict[str, object]) -> float:
     validation_accuracy = float(row.get("validation_accuracy", 0.0) or 0.0)
     train_accuracy = float(row.get("train_accuracy", 0.0) or 0.0)
@@ -498,7 +529,7 @@ def _build_spec_catalog(examples: pd.DataFrame) -> list[str]:
         if column in reserved:
             continue
         series = pd.to_numeric(train[column], errors="coerce").dropna()
-        if len(series) < 8 or series.nunique() < 4:
+        if not _feature_usable_for_beam(examples[column], examples):
             continue
         for quantile in (0.25, 0.50, 0.75):
             value = float(series.quantile(quantile))
@@ -507,6 +538,29 @@ def _build_spec_catalog(examples: pd.DataFrame) -> list[str]:
             specs.append(_encode_spec(column, value, 1))
             specs.append(_encode_spec(column, value, -1))
     return sorted(set(specs))
+
+
+def _feature_usable_for_beam(series: pd.Series, examples: pd.DataFrame) -> bool:
+    train = examples["target_year"].astype(int) <= TRAIN_END_YEAR
+    values = pd.to_numeric(series, errors="coerce")
+    train_values = values[train].dropna()
+    return len(train_values) >= 8 and train_values.nunique() >= 4
+
+
+def _feature_quality(item: dict[str, object], non_null: pd.Series, examples: pd.DataFrame) -> str:
+    note = str(item.get("nota", "")).lower()
+    free_since_1980 = str(item.get("gratis_desde_1980", "")).lower()
+    source = str(item.get("serie_o_ticker", "")).lower()
+    if int(non_null.sum()) == 0:
+        if "no free public series" in source or "pago" in note or "no gratis fiable" in note:
+            return "sin_datos_publicos_fiables"
+        return "sin_datos"
+    first_year = int(examples.loc[non_null, "target_year"].astype(int).min())
+    if "proxy" in free_since_1980 or "proxy" in note:
+        return "proxy"
+    if "no" in free_since_1980 or first_year > 1980:
+        return "parcial"
+    return "buena"
 
 
 def _seed_candidates(

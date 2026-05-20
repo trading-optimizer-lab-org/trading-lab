@@ -167,9 +167,11 @@ def test_annual_sp500_beam_workflow_is_manual_and_keeps_locked_closed() -> None:
     assert "workflow_dispatch" in text
     assert "push:" not in text
     assert "scripts/download_annual_public_data.py" in text
+    assert "scripts/audit_annual_features.py" in text
     assert "scripts/run_annual_beam_search.py" in text
     assert "scripts/merge_annual_beam_leaderboards.py" in text
     assert "--total-stages 64" in text
+    assert "annual_feature_coverage.csv" in text
     assert "annual-sp500-beam-leaderboard" in text
     assert "locked_opened: false" in text
 
