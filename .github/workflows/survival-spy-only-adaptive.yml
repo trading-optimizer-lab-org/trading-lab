@@ -7,15 +7,6 @@ on:
         description: Config file
         required: true
         default: configs/survival_spy_only_github.yaml
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/survival-spy-only-adaptive.yml"
-      - "configs/survival_spy_only_github.yaml"
-      - "scripts/download_public_data.py"
-      - "scripts/run_survival_spy_only_adaptive_stage.py"
-      - "scripts/merge_survival_leaderboards.py"
-      - "src/**"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

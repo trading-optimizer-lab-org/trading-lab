@@ -1,13 +1,6 @@
 name: Codespaces Smoke
 
 on:
-  push:
-    paths:
-      - ".devcontainer/**"
-      - ".github/workflows/codespaces-smoke.yml"
-      - "pyproject.toml"
-      - "src/**"
-      - "tests/**"
   workflow_dispatch:
 
 jobs:

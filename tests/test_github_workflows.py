@@ -165,8 +165,7 @@ def test_annual_sp500_beam_workflow_is_manual_and_keeps_locked_closed() -> None:
     text = Path(".github/workflows/annual-sp500-beam.yml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch" in text
-    assert "push:" in text
-    assert ".github/annual-beam-trigger.txt" in text
+    assert "push:" not in text
     assert "scripts/download_annual_public_data.py" in text
     assert "scripts/audit_annual_features.py" in text
     assert "scripts/run_annual_beam_search.py" in text
@@ -177,6 +176,25 @@ def test_annual_sp500_beam_workflow_is_manual_and_keeps_locked_closed() -> None:
     assert "annual_feature_coverage.csv" in text
     assert "annual-sp500-beam-leaderboard" in text
     assert "locked_opened: false" in text
+
+
+def test_heavy_workflows_do_not_run_on_push() -> None:
+    for path in (
+        ".github/workflows/annual-sp500-beam.yml",
+        ".github/workflows/survival-spy-only-adaptive.yml",
+        ".github/workflows/codespaces-smoke.yml",
+    ):
+        text = Path(path).read_text(encoding="utf-8")
+        assert "workflow_dispatch" in text
+        assert "push:" not in text
+
+
+def test_ci_is_manual_or_pull_request_only() -> None:
+    text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch" in text
+    assert "pull_request:" in text
+    assert "push:" not in text
 
 
 def test_codespaces_devcontainer_uses_existing_python_image() -> None:
