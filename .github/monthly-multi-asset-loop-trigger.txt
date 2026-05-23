@@ -1,1 +1,1 @@
-monthly multi asset loop trigger placeholder
+manual trigger after SP500 monthly run completed: 2026-05-23T00:45:11Z
