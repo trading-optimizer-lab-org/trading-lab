@@ -1,0 +1,97 @@
+name: Monthly Multi Asset Partial Merge
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run ID to merge partial monthly multi-asset artifacts from"
+        required: true
+        default: "26353806717"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+jobs:
+  partial-merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download completed stage artifacts from source run
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: outputs/monthly_multi_asset_partial/stages
+          pattern: monthly-multi-asset-loop-*
+      - name: Merge currently available stages
+        run: python scripts/merge_monthly_multi_asset_leaderboards.py --input-glob "outputs/monthly_multi_asset_partial/stages/*/monthly_multi_asset_leaderboard_stage_*.csv" --output-dir outputs/monthly_multi_asset_partial
+      - name: Upload partial monthly multi-asset leaderboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-multi-asset-partial-leaderboard-${{ inputs.source_run_id }}
+          path: |
+            outputs/monthly_multi_asset_partial/monthly_multi_asset_leaderboard.csv
+            outputs/monthly_multi_asset_partial/monthly_multi_asset_train_validation_10pct.csv
+            outputs/monthly_multi_asset_partial/monthly_multi_asset_summary.json
+      - name: Publish partial issue summary
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const summary = JSON.parse(fs.readFileSync("outputs/monthly_multi_asset_partial/monthly_multi_asset_summary.json", "utf8"));
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const sourceRun = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${{ inputs.source_run_id }}`;
+            const body = [
+              "# Monthly Multi Asset partial result",
+              "",
+              `Partial merge run: ${runUrl}`,
+              `Source run: ${sourceRun}`,
+              "",
+              `Rows: ${summary.rows ?? 0}`,
+              `Accepted train +10pct every year: ${summary.accepted ?? 0}`,
+              `Verified train+validation +10pct every year: ${summary.verified_train_validation_10pct ?? 0}`,
+              `Unique verified train+validation +10pct every year: ${summary.unique_verified_train_validation_10pct ?? 0}`,
+              `score_mode: ${summary.score_mode ?? "train_only_monthly_multi_asset_10pct"}`,
+              `validation_role: ${summary.validation_role ?? "report_only"}`,
+              `locked_opened: false`,
+              "",
+              "## Best train candidate",
+              "",
+              `ID: ${summary.best_candidate ?? "none"}`,
+              `Assets: ${summary.best_assets ?? "n/a"}`,
+              `Selector: ${summary.best_asset_selector ?? "n/a"}`,
+              `Train min year return: ${summary.best_train_min_year_return ?? "n/a"}`,
+              `Validation min year return, report only: ${summary.best_validation_min_year_return ?? "n/a"}`,
+              "",
+              "## Best verified candidate",
+              "",
+              `ID: ${summary.best_verified_candidate ?? "none"}`,
+              "",
+              "Artifacts: download the partial leaderboard from this run."
+            ].join("\n");
+            const title = "Monthly Multi Asset partial result";
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100,
+            });
+            const existing = issues.find(issue => issue.title === title);
+            if (existing) {
+              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body });
+            }
