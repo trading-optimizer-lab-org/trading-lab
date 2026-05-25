@@ -51,7 +51,7 @@ jobs:
           path: outputs/weekly_multi_asset_sp500_down_5pct/stages/${{ matrix.method }}
           pattern: ${{ matrix.artifact_pattern }}
       - name: Merge source method stages
-        run: python scripts/merge_weekly_multi_asset_down_5pct.py --config configs/weekly_multi_asset_sp500_down_5pct.yaml --input-glob "outputs/weekly_multi_asset_sp500_down_5pct/stages/${{ matrix.method }}/**/weekly_multi_asset_sp500_down_5pct_leaderboard_stage_*.csv" --output-dir outputs/weekly_multi_asset_sp500_down_5pct/method_merges/${{ matrix.method }} --skip-examples --progress-every 10
+        run: python scripts/merge_weekly_multi_asset_down_5pct.py --config configs/weekly_multi_asset_sp500_down_5pct.yaml --input-glob "outputs/weekly_multi_asset_sp500_down_5pct/stages/${{ matrix.method }}/**/weekly_multi_asset_sp500_down_5pct_leaderboard_stage_*.csv" --output-dir outputs/weekly_multi_asset_sp500_down_5pct/method_merges/${{ matrix.method }} --skip-examples --progress-every 10 --max-output-rows 20000
       - name: Upload source method merge
         uses: actions/upload-artifact@v4
         with:
@@ -89,7 +89,7 @@ jobs:
           name: weekly-multi-asset-public-panel
           path: data/public
       - name: Merge source weekly multi-asset methods
-        run: python scripts/merge_weekly_multi_asset_down_5pct.py --config configs/weekly_multi_asset_sp500_down_5pct.yaml --input-glob "outputs/weekly_multi_asset_sp500_down_5pct/method_merges/**/weekly_multi_asset_sp500_down_5pct_leaderboard.csv" --output-dir outputs/weekly_multi_asset_sp500_down_5pct --progress-every 1
+        run: python scripts/merge_weekly_multi_asset_down_5pct.py --config configs/weekly_multi_asset_sp500_down_5pct.yaml --input-glob "outputs/weekly_multi_asset_sp500_down_5pct/method_merges/**/weekly_multi_asset_sp500_down_5pct_leaderboard.csv" --output-dir outputs/weekly_multi_asset_sp500_down_5pct --progress-every 1 --max-output-rows 50000
       - name: Upload weekly multi-asset leaderboard
         uses: actions/upload-artifact@v4
         with:

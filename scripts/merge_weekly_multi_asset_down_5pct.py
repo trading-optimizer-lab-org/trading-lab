@@ -22,6 +22,7 @@ def main() -> int:
     parser.add_argument("--config", default="configs/weekly_multi_asset_sp500_down_5pct.yaml")
     parser.add_argument("--skip-examples", action="store_true", help="Skip rebuilding weekly examples and best-position tables.")
     parser.add_argument("--progress-every", type=int, default=25)
+    parser.add_argument("--max-output-rows", type=int, default=0)
     args = parser.parse_args()
 
     paths = sorted(glob.glob(args.input_glob, recursive=True))
@@ -55,6 +56,7 @@ def main() -> int:
         args.output_dir,
         examples=examples,
         progress_every=args.progress_every,
+        max_output_rows=args.max_output_rows,
     )
     print(json.dumps({"input_files": len(paths), **summary}, indent=2, sort_keys=True))
     return 0

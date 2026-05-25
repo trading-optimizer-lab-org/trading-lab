@@ -282,6 +282,7 @@ def merge_weekly_multi_asset_leaderboards(
     *,
     examples: pd.DataFrame | None = None,
     progress_every: int = 0,
+    max_output_rows: int = 0,
 ) -> dict[str, object]:
     frames = []
     existing_paths = [Path(path) for path in paths if Path(path).exists()]
@@ -316,10 +317,12 @@ def merge_weekly_multi_asset_leaderboards(
         .sort_values("weekly_multi_asset_score", ascending=False)
     )
     print(f"merged rows: {len(merged)}", flush=True)
-    merged.to_csv(output / "weekly_multi_asset_sp500_down_5pct_leaderboard.csv", index=False)
     verified = _verified(merged)
-    verified.to_csv(output / "weekly_multi_asset_sp500_down_5pct_verified.csv", index=False)
     print(f"verified rows: {len(verified)}", flush=True)
+    output_merged = _limit_weekly_output_rows(merged, verified, max_output_rows)
+    print(f"output leaderboard rows: {len(output_merged)}", flush=True)
+    output_merged.to_csv(output / "weekly_multi_asset_sp500_down_5pct_leaderboard.csv", index=False)
+    verified.to_csv(output / "weekly_multi_asset_sp500_down_5pct_verified.csv", index=False)
     if examples is not None and not merged.empty:
         print("building best-candidate positions", flush=True)
         best = _candidate_from_row(merged.iloc[0])
@@ -358,6 +361,20 @@ def merge_weekly_multi_asset_leaderboards(
         encoding="utf-8",
     )
     return summary
+
+
+def _limit_weekly_output_rows(merged: pd.DataFrame, verified: pd.DataFrame, max_output_rows: int) -> pd.DataFrame:
+    if max_output_rows <= 0 or len(merged) <= max_output_rows:
+        return merged
+    keep = merged.head(max_output_rows)
+    if verified.empty or "candidate_id" not in verified:
+        return keep
+    combined = pd.concat([keep, verified], ignore_index=True)
+    return (
+        combined.sort_values("weekly_multi_asset_score", ascending=False)
+        .drop_duplicates("candidate_id", keep="first")
+        .sort_values("weekly_multi_asset_score", ascending=False)
+    )
 
 
 def _run_random_broad(
