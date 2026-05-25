@@ -1,0 +1,26 @@
+data_path: data/public/spy_daily.csv
+output_dir: outputs/weekly_multi_asset_sp500_down_5pct
+start_year: 1994
+end_year: 2026
+train_start: "1994-01-01"
+train_end: "2007-12-31"
+validation_start: "2008-01-01"
+validation_end: "2019-12-31"
+locked_start: "2020-01-01"
+cash_return: 0.0
+min_down_year_return: 0.05
+min_train_year_return: 0.0
+max_abs_exposure: 1.0
+max_features: 8
+seed_pool: 5000
+beam_width: 160
+generations: 24
+mutations_per_parent: 36
+top_rows_per_stage: 1200
+random_seed: 817000
+score_mode: train_only_weekly_sp500_down_5pct
+validation_role: report_only
+locked_opened: false
+train_down_years_expected: [2000, 2001, 2002]
+validation_down_years_expected: [2008, 2018]
+methods: [random_broad, beam, genetic, bayesian_like, bandit]
