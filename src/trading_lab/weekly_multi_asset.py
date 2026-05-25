@@ -281,8 +281,14 @@ def merge_weekly_multi_asset_leaderboards(
     output_dir: str | Path,
     *,
     examples: pd.DataFrame | None = None,
+    progress_every: int = 0,
 ) -> dict[str, object]:
-    frames = [pd.read_csv(path) for path in paths if Path(path).exists()]
+    frames = []
+    existing_paths = [Path(path) for path in paths if Path(path).exists()]
+    for index, path in enumerate(existing_paths, start=1):
+        frames.append(pd.read_csv(path))
+        if progress_every > 0 and (index == 1 or index % progress_every == 0 or index == len(existing_paths)):
+            print(f"read {index}/{len(existing_paths)} leaderboard files", flush=True)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     if not frames:
@@ -298,18 +304,24 @@ def merge_weekly_multi_asset_leaderboards(
             encoding="utf-8",
         )
         return summary
+    print(f"concatenating {len(frames)} leaderboard frames", flush=True)
     raw = pd.concat(frames, ignore_index=True)
+    print(f"raw rows: {len(raw)}", flush=True)
     methods = _method_summary(raw)
     methods.to_csv(output / "weekly_multi_asset_sp500_down_5pct_methods.csv", index=False)
+    print("deduplicating candidates", flush=True)
     merged = (
         raw.sort_values("weekly_multi_asset_score", ascending=False)
         .drop_duplicates("candidate_id", keep="first")
         .sort_values("weekly_multi_asset_score", ascending=False)
     )
+    print(f"merged rows: {len(merged)}", flush=True)
     merged.to_csv(output / "weekly_multi_asset_sp500_down_5pct_leaderboard.csv", index=False)
     verified = _verified(merged)
     verified.to_csv(output / "weekly_multi_asset_sp500_down_5pct_verified.csv", index=False)
+    print(f"verified rows: {len(verified)}", flush=True)
     if examples is not None and not merged.empty:
+        print("building best-candidate positions", flush=True)
         best = _candidate_from_row(merged.iloc[0])
         method = str(merged.iloc[0].get("method", "merged") or "merged")
         _, positions, year_by_year = evaluate_weekly_multi_asset_candidate(examples, best, method=method)
