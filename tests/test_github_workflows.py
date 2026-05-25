@@ -275,7 +275,8 @@ def test_weekly_7methods_12h_stateful_workflow_is_manual_balanced_and_locked_clo
     config = Path("configs/weekly_7methods_12h_stateful.yaml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch" in text
-    assert "push:" not in text
+    assert "push:" in text
+    assert ".github/weekly-7methods-12h-trigger.txt" in text
     assert "max-parallel: 245" in text
     assert text.count("--time-budget-minutes 240") == 6
     assert text.count("--expected-files-per-method 70") == 3

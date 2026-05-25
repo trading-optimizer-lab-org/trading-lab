@@ -2,6 +2,11 @@ name: Weekly Multi Asset SP500 Down 5pct 7 Methods 12h Stateful
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/weekly-7methods-12h-trigger.txt
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
