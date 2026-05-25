@@ -1,0 +1,649 @@
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+from typing import Iterable
+
+import numpy as np
+import pandas as pd
+
+from trading_lab.monthly_risk import MonthlyRiskSearchConfig, _json_safe
+from trading_lab.weekly_multi_asset import (
+    WEEKLY_ASSET_SELECTORS,
+    WeeklyMultiAssetCandidate,
+    _asset_universes,
+    _available_assets_from_examples,
+    _build_weekly_spec_catalog,
+    _candidate_from_row,
+    _candidate_id,
+    _catalog_groups,
+    _choose_group,
+    _crossover,
+    _evaluate_unique,
+    _group_rewards,
+    _method_summary,
+    _mutate_candidate,
+    _random_candidate,
+    _select_beam,
+    _spec_weights_from_rows,
+    _verified,
+    _weighted_candidate,
+    evaluate_weekly_multi_asset_candidate,
+    merge_weekly_multi_asset_leaderboards,
+)
+
+
+STATEFUL_WEEKLY_METHODS = (
+    "sobol_random_asha",
+    "tpe_asha_lite",
+    "dehb_lite",
+    "bohb_lite",
+    "smac_mf_lite",
+    "beam",
+    "genetic",
+)
+
+EXPECTED_TRAIN_YEARS = 14
+EXPECTED_VALIDATION_YEARS = 12
+EXPECTED_TRAIN_DOWN_YEARS = 3
+EXPECTED_VALIDATION_DOWN_YEARS = 2
+
+STATE_TOP_CANDIDATES = 500
+
+
+def run_stateful_weekly_search(
+    examples: pd.DataFrame,
+    config: MonthlyRiskSearchConfig,
+    *,
+    method: str,
+    wave: int,
+    stage: int,
+    time_budget_minutes: float,
+    state_dir: str | Path | None = None,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    if method not in STATEFUL_WEEKLY_METHODS:
+        raise ValueError(f"unknown stateful weekly method: {method}")
+    catalog = _build_weekly_spec_catalog(examples)
+    assets = _available_assets_from_examples(examples)
+    if not catalog or not assets:
+        return [], _empty_state(method, wave, stage)
+
+    seed = int(config.random_seed + wave * 1_000_000 + stage * 10_000 + _stateful_method_offset(method))
+    rng = np.random.default_rng(seed)
+    prior_state = load_method_state(state_dir, method)
+    prior_candidates = _state_candidates(prior_state)
+
+    seen: set[tuple[tuple[str, ...], tuple[str, ...], str, float, float, float]] = set()
+    rows: list[dict[str, object]] = []
+    start = time.monotonic()
+    deadline = start + max(1.0, float(time_budget_minutes) * 60.0)
+    iteration = 0
+
+    if prior_candidates:
+        rows.extend(_evaluate_and_stamp(examples, prior_candidates, seen, method=method, wave=wave, stage=stage, start=start))
+
+    while time.monotonic() < deadline or iteration == 0:
+        candidates = _next_candidates(method, catalog, assets, config=config, rng=rng, rows=rows, prior=prior_candidates, iteration=iteration)
+        if not candidates:
+            break
+        child_rows = _evaluate_and_stamp(examples, candidates, seen, method=method, wave=wave, stage=stage, start=start)
+        rows.extend(child_rows)
+        iteration += 1
+        if time_budget_minutes <= 0:
+            break
+
+    rows = _trim_stage_rows(rows, config.top_rows_per_stage)
+    state = build_method_state(rows, method=method, wave=wave, stage=stage)
+    return rows, state
+
+
+def write_stateful_weekly_outputs(
+    rows: list[dict[str, object]],
+    state: dict[str, object],
+    output_dir: str | Path,
+    *,
+    method: str,
+    wave: int,
+    stage: int,
+) -> None:
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    leaderboard = pd.DataFrame(rows)
+    leaderboard.to_csv(output / "weekly_7methods_12h_leaderboard.csv", index=False)
+    leaderboard.to_csv(output / f"weekly_7methods_12h_leaderboard_stage_{method}_{wave}_{stage}.csv", index=False)
+    verified = _strict_verified(leaderboard)
+    verified.to_csv(output / "weekly_7methods_12h_verified.csv", index=False)
+    state_dir = output / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / f"weekly_7methods_12h_state_{method}_{wave}_{stage}.json"
+    state_path.write_text(json.dumps(_json_safe(state), indent=2, sort_keys=True), encoding="utf-8")
+    summary = _stage_summary(rows, method=method, wave=wave, stage=stage)
+    (output / "weekly_7methods_12h_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def merge_state_files(
+    paths: Iterable[str | Path],
+    output_dir: str | Path,
+    *,
+    state_top: int = STATE_TOP_CANDIDATES,
+    expected_files_per_method: int = 0,
+) -> dict[str, object]:
+    output = Path(output_dir)
+    state_output = output / "state"
+    state_output.mkdir(parents=True, exist_ok=True)
+    grouped: dict[str, list[dict[str, object]]] = {method: [] for method in STATEFUL_WEEKLY_METHODS}
+    state_files_by_method: dict[str, int] = {method: 0 for method in STATEFUL_WEEKLY_METHODS}
+    raw_states = 0
+    for path in paths:
+        file_path = Path(path)
+        if not file_path.exists():
+            continue
+        raw_states += 1
+        try:
+            data = json.loads(file_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        method = str(data.get("method", ""))
+        if method in grouped:
+            state_files_by_method[method] += 1
+            grouped[method].extend(list(data.get("candidates", [])))
+
+    if expected_files_per_method > 0:
+        missing = {
+            method: count
+            for method, count in state_files_by_method.items()
+            if count < expected_files_per_method
+        }
+        if missing:
+            raise ValueError(
+                "missing weekly 7-method state files: "
+                + ", ".join(f"{method}={count}/{expected_files_per_method}" for method, count in sorted(missing.items()))
+            )
+
+    summary_methods: list[dict[str, object]] = []
+    for method, candidates in grouped.items():
+        dedup = _dedupe_state_candidates(candidates)
+        kept = [
+            _sanitize_state_candidate(row)
+            for row in sorted(dedup, key=lambda item: float(item.get("train_score", 0.0) or 0.0), reverse=True)[:state_top]
+        ]
+        state = {
+            "method": method,
+            "candidates": kept,
+            "candidate_count": len(kept),
+            "source_state_count": raw_states,
+            "validation_role": "report_only",
+            "locked_opened": False,
+        }
+        (state_output / f"{method}.json").write_text(json.dumps(_json_safe(state), indent=2, sort_keys=True), encoding="utf-8")
+        summary_methods.append({"method": method, "state_candidates": len(kept), "raw_candidates": len(candidates)})
+    summary = {
+        "state_files": raw_states,
+        "state_files_by_method": state_files_by_method,
+        "expected_files_per_method": int(expected_files_per_method),
+        "methods": summary_methods,
+        "validation_role": "report_only",
+        "locked_opened": False,
+    }
+    (output / "weekly_7methods_12h_state_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    return summary
+
+
+def merge_stateful_weekly_leaderboards(
+    paths: list[str | Path],
+    output_dir: str | Path,
+    *,
+    examples: pd.DataFrame | None = None,
+    max_output_rows: int = 50_000,
+) -> dict[str, object]:
+    temp = Path(output_dir) / "_weekly_multi_temp"
+    summary = merge_weekly_multi_asset_leaderboards(paths, temp, examples=examples, progress_every=25, max_output_rows=max_output_rows)
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+
+    name_map = {
+        "weekly_multi_asset_sp500_down_5pct_leaderboard.csv": "weekly_7methods_12h_leaderboard.csv",
+        "weekly_multi_asset_sp500_down_5pct_verified.csv": "weekly_7methods_12h_verified.csv",
+        "weekly_multi_asset_sp500_down_5pct_methods.csv": "weekly_7methods_12h_methods.csv",
+        "weekly_multi_asset_sp500_down_5pct_summary.json": "weekly_7methods_12h_summary.json",
+        "weekly_multi_asset_sp500_down_5pct_year_by_year.csv": "weekly_7methods_12h_year_by_year.csv",
+        "weekly_multi_asset_sp500_down_5pct_weekly_positions.csv": "weekly_7methods_12h_weekly_positions.csv",
+    }
+    for source, target in name_map.items():
+        source_path = temp / source
+        if source_path.exists():
+            (output / target).write_bytes(source_path.read_bytes())
+
+    leaderboard_path = output / "weekly_7methods_12h_leaderboard.csv"
+    if leaderboard_path.exists():
+        leaderboard = pd.read_csv(leaderboard_path)
+    else:
+        leaderboard = pd.DataFrame()
+    verified = _strict_verified(leaderboard)
+    verified.to_csv(output / "weekly_7methods_12h_verified.csv", index=False)
+    methods = _stateful_method_summary(leaderboard, verified)
+    methods.to_csv(output / "weekly_7methods_12h_methods.csv", index=False)
+    efficiency = _stateful_efficiency(leaderboard, verified)
+    efficiency.to_csv(output / "weekly_7methods_12h_efficiency.csv", index=False)
+
+    final_summary = {
+        **summary,
+        "rows": int(len(leaderboard)),
+        "verified_train_validation_5pct": int(len(verified)),
+        "unique_verified_train_validation_5pct": int(verified["candidate_id"].nunique()) if "candidate_id" in verified else 0,
+        "best_candidate": str(leaderboard.iloc[0]["candidate_id"]) if not leaderboard.empty else None,
+        "best_method": str(leaderboard.iloc[0].get("method", "")) if not leaderboard.empty else None,
+        "best_verified_candidate": str(verified.iloc[0]["candidate_id"]) if not verified.empty else None,
+        "locked_opened": False,
+        "validation_role": "report_only",
+        "methods": list(STATEFUL_WEEKLY_METHODS),
+        "expected_train_years": EXPECTED_TRAIN_YEARS,
+        "expected_validation_years": EXPECTED_VALIDATION_YEARS,
+        "expected_train_down_years": EXPECTED_TRAIN_DOWN_YEARS,
+        "expected_validation_down_years": EXPECTED_VALIDATION_DOWN_YEARS,
+    }
+    (output / "weekly_7methods_12h_summary.json").write_text(json.dumps(_json_safe(final_summary), indent=2, sort_keys=True), encoding="utf-8")
+    return final_summary
+
+
+def load_method_state(state_dir: str | Path | None, method: str) -> dict[str, object]:
+    if not state_dir:
+        return {}
+    root = Path(state_dir)
+    for candidate in (root / "state" / f"{method}.json", root / f"{method}.json"):
+        if candidate.exists():
+            return json.loads(candidate.read_text(encoding="utf-8"))
+    matches = sorted(root.rglob(f"{method}.json"))
+    if matches:
+        return json.loads(matches[0].read_text(encoding="utf-8"))
+    return {}
+
+
+def build_method_state(rows: list[dict[str, object]], *, method: str, wave: int, stage: int) -> dict[str, object]:
+    candidates = []
+    for row in _select_beam(rows, STATE_TOP_CANDIDATES):
+        candidates.append(_state_candidate_from_row(row))
+    return {
+        "method": method,
+        "wave": wave,
+        "stage": stage,
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+        "validation_role": "report_only",
+        "locked_opened": False,
+    }
+
+
+def _next_candidates(
+    method: str,
+    catalog: list[str],
+    assets: list[str],
+    *,
+    config: MonthlyRiskSearchConfig,
+    rng: np.random.Generator,
+    rows: list[dict[str, object]],
+    prior: list[WeeklyMultiAssetCandidate],
+    iteration: int,
+) -> list[WeeklyMultiAssetCandidate]:
+    batch_size = max(32, min(512, config.beam_width * max(1, config.mutations_per_parent // 4)))
+    if iteration == 0 and not rows:
+        return _seed_candidates_lite(catalog, assets, config=config, rng=rng, method=method, limit=batch_size)
+    if method == "beam":
+        return _beam_candidates(catalog, assets, rows, config=config, rng=rng, batch_size=batch_size)
+    if method == "genetic":
+        return _genetic_candidates(catalog, assets, rows, prior, config=config, rng=rng, batch_size=batch_size)
+    if method == "tpe_asha_lite":
+        weights = _spec_weights_from_rows(rows, catalog)
+        return [_weighted_candidate(catalog, weights, assets, config=config, rng=rng) for _ in range(batch_size)]
+    if method == "dehb_lite":
+        return _dehb_candidates(catalog, assets, rows, prior, config=config, rng=rng, batch_size=batch_size)
+    if method == "bohb_lite":
+        weights = _spec_weights_from_rows(rows, catalog)
+        return [
+            _weighted_candidate(catalog, weights, assets, config=config, rng=rng) if index % 2 else _random_candidate(catalog, assets, config=config, rng=rng)
+            for index in range(batch_size)
+        ]
+    if method == "smac_mf_lite":
+        groups = _catalog_groups(catalog)
+        rewards = _group_rewards(rows, groups)
+        return [_random_candidate(groups.get(_choose_group(rewards, rng), catalog) or catalog, assets, config=config, rng=rng) for _ in range(batch_size)]
+    return [_sobol_like_candidate(catalog, assets, config=config, stage=config.stage, index=iteration * batch_size + offset) for offset in range(batch_size)]
+
+
+def _seed_candidates_lite(
+    catalog: list[str],
+    assets: list[str],
+    *,
+    config: MonthlyRiskSearchConfig,
+    rng: np.random.Generator,
+    method: str,
+    limit: int,
+) -> list[WeeklyMultiAssetCandidate]:
+    stage_catalog = [spec for index, spec in enumerate(catalog) if index % config.total_stages == config.stage] or catalog
+    universes = _asset_universes(assets)
+    candidates: list[WeeklyMultiAssetCandidate] = []
+    selector_shift = _stateful_method_offset(method) % len(WEEKLY_ASSET_SELECTORS)
+    scales = (0.35, 0.75, 1.15, 1.55)
+    for spec_index, spec in enumerate(stage_catalog[: max(1, limit // 2)]):
+        universe = universes[spec_index % len(universes)]
+        selector = WEEKLY_ASSET_SELECTORS[(spec_index + selector_shift) % len(WEEKLY_ASSET_SELECTORS)]
+        candidates.append(WeeklyMultiAssetCandidate((spec,), universe, selector=selector, scale=float(scales[spec_index % len(scales)])))
+    while len(candidates) < limit:
+        candidates.append(_random_candidate(stage_catalog, assets, config=config, rng=rng))
+    return candidates[:limit]
+
+
+def _beam_candidates(
+    catalog: list[str],
+    assets: list[str],
+    rows: list[dict[str, object]],
+    *,
+    config: MonthlyRiskSearchConfig,
+    rng: np.random.Generator,
+    batch_size: int,
+) -> list[WeeklyMultiAssetCandidate]:
+    beam = [_candidate_from_row(row) for row in _select_beam(rows, max(1, config.beam_width))]
+    if not beam:
+        return [_random_candidate(catalog, assets, config=config, rng=rng) for _ in range(batch_size)]
+    return [_mutate_candidate(beam[index % len(beam)], catalog, assets, config=config, rng=rng) for index in range(batch_size)]
+
+
+def _genetic_candidates(
+    catalog: list[str],
+    assets: list[str],
+    rows: list[dict[str, object]],
+    prior: list[WeeklyMultiAssetCandidate],
+    *,
+    config: MonthlyRiskSearchConfig,
+    rng: np.random.Generator,
+    batch_size: int,
+) -> list[WeeklyMultiAssetCandidate]:
+    parents = [_candidate_from_row(row) for row in _select_beam(rows, max(2, config.beam_width))]
+    parents.extend(prior[: max(0, config.beam_width - len(parents))])
+    if len(parents) < 2:
+        return [_random_candidate(catalog, assets, config=config, rng=rng) for _ in range(batch_size)]
+    children = []
+    for _ in range(batch_size):
+        left = parents[int(rng.integers(0, len(parents)))]
+        right = parents[int(rng.integers(0, len(parents)))]
+        children.append(_mutate_candidate(_crossover(left, right, rng), catalog, assets, config=config, rng=rng))
+    return children
+
+
+def _dehb_candidates(
+    catalog: list[str],
+    assets: list[str],
+    rows: list[dict[str, object]],
+    prior: list[WeeklyMultiAssetCandidate],
+    *,
+    config: MonthlyRiskSearchConfig,
+    rng: np.random.Generator,
+    batch_size: int,
+) -> list[WeeklyMultiAssetCandidate]:
+    elites = [_candidate_from_row(row) for row in _select_beam(rows, max(3, config.beam_width))]
+    elites.extend(prior[: max(0, config.beam_width - len(elites))])
+    if len(elites) < 3:
+        return [_random_candidate(catalog, assets, config=config, rng=rng) for _ in range(batch_size)]
+    children = []
+    for index in range(batch_size):
+        base = elites[int(rng.integers(0, len(elites)))]
+        donor = elites[int(rng.integers(0, len(elites)))]
+        trial = WeeklyMultiAssetCandidate(
+            tuple(sorted(set(base.specs + donor.specs)))[: config.max_features],
+            base.assets if index % 2 else donor.assets,
+            selector=base.selector if index % 3 else donor.selector,
+            intercept=float(np.clip(base.intercept + 0.5 * (donor.intercept - base.intercept), -0.95, 0.95)),
+            scale=float(np.clip(base.scale + 0.5 * (donor.scale - base.scale), 0.05, 1.75)),
+            smoothing=float(np.clip(base.smoothing + 0.5 * (donor.smoothing - base.smoothing), 0.0, 0.80)),
+        )
+        children.append(_mutate_candidate(trial, catalog, assets, config=config, rng=rng))
+    return children
+
+
+def _sobol_like_candidate(
+    catalog: list[str],
+    assets: list[str],
+    *,
+    config: MonthlyRiskSearchConfig,
+    stage: int,
+    index: int,
+) -> WeeklyMultiAssetCandidate:
+    rng = np.random.default_rng(10_000_019 + stage * 1_000_003 + index * 9_176)
+    return _random_candidate(catalog, assets, config=config, rng=rng)
+
+
+def _evaluate_and_stamp(
+    examples: pd.DataFrame,
+    candidates: list[WeeklyMultiAssetCandidate],
+    seen: set[tuple[tuple[str, ...], tuple[str, ...], str, float, float, float]],
+    *,
+    method: str,
+    wave: int,
+    stage: int,
+    start: float,
+) -> list[dict[str, object]]:
+    rows = _evaluate_unique(examples, candidates, seen, method=method)
+    stamped = []
+    for index, row in enumerate(rows, start=1):
+        elapsed = max(0.0, time.monotonic() - start)
+        row["method"] = method
+        row["wave"] = int(wave)
+        row["stage"] = int(stage)
+        row["elapsed_seconds"] = float(elapsed)
+        row["candidates_evaluated"] = int(index)
+        row["first_seen_wave"] = int(wave)
+        row["first_seen_minute"] = float(elapsed / 60.0)
+        row["accepted"] = bool(row.get("accepted")) and _has_expected_train_counts(row)
+        row["verified_train_validation_5pct"] = bool(row.get("accepted")) and _has_expected_validation_counts(row) and bool(row.get("verified_train_validation_5pct"))
+        row["locked_opened"] = False
+        row["validation_role"] = "report_only"
+        stamped.append(row)
+    return stamped
+
+
+def _trim_stage_rows(rows: list[dict[str, object]], top_rows: int) -> list[dict[str, object]]:
+    sorted_rows = sorted(rows, key=lambda row: float(row.get("weekly_multi_asset_score", 0.0) or 0.0), reverse=True)
+    if top_rows <= 0:
+        return sorted_rows
+    verified = [row for row in sorted_rows if bool(row.get("verified_train_validation_5pct"))]
+    top = sorted_rows[:top_rows]
+    by_id = {str(row["candidate_id"]): row for row in [*top, *verified]}
+    return sorted(by_id.values(), key=lambda row: float(row.get("weekly_multi_asset_score", 0.0) or 0.0), reverse=True)
+
+
+def _strict_verified(rows: pd.DataFrame) -> pd.DataFrame:
+    base = _verified(rows)
+    if base.empty:
+        return base
+    mask = (
+        (pd.to_numeric(base["train_years_total"], errors="coerce") == EXPECTED_TRAIN_YEARS)
+        & (pd.to_numeric(base["validation_years_total"], errors="coerce") == EXPECTED_VALIDATION_YEARS)
+        & (pd.to_numeric(base["train_down_years_total"], errors="coerce") == EXPECTED_TRAIN_DOWN_YEARS)
+        & (pd.to_numeric(base["validation_down_years_total"], errors="coerce") == EXPECTED_VALIDATION_DOWN_YEARS)
+    )
+    return base.loc[mask].copy()
+
+
+def _has_expected_train_counts(row: dict[str, object]) -> bool:
+    return (
+        int(row.get("train_years_total", 0) or 0) == EXPECTED_TRAIN_YEARS
+        and int(row.get("train_down_years_total", 0) or 0) == EXPECTED_TRAIN_DOWN_YEARS
+    )
+
+
+def _has_expected_validation_counts(row: dict[str, object]) -> bool:
+    return (
+        int(row.get("validation_years_total", 0) or 0) == EXPECTED_VALIDATION_YEARS
+        and int(row.get("validation_down_years_total", 0) or 0) == EXPECTED_VALIDATION_DOWN_YEARS
+    )
+
+
+def _state_candidates(state: dict[str, object]) -> list[WeeklyMultiAssetCandidate]:
+    candidates = []
+    for row in state.get("candidates", []) if isinstance(state, dict) else []:
+        try:
+            candidates.append(
+                WeeklyMultiAssetCandidate(
+                    tuple(row.get("specs", [])),
+                    tuple(row.get("assets", ["SPY"])),
+                    selector=str(row.get("selector", "momentum_26w")),
+                    intercept=float(row.get("intercept", 0.0)),
+                    scale=float(row.get("scale", 1.0)),
+                    smoothing=float(row.get("smoothing", 0.0)),
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    return candidates
+
+
+def _state_candidate_from_row(row: dict[str, object]) -> dict[str, object]:
+    candidate = _candidate_from_row(row)
+    return {
+        "candidate_id": _candidate_id(candidate),
+        "specs": list(candidate.specs),
+        "assets": list(candidate.assets),
+        "selector": candidate.selector,
+        "intercept": float(candidate.intercept),
+        "scale": float(candidate.scale),
+        "smoothing": float(candidate.smoothing),
+        "train_score": float(row.get("weekly_multi_asset_score", 0.0) or 0.0),
+        "train_years_positive": int(row.get("train_years_positive", 0) or 0),
+        "train_years_total": int(row.get("train_years_total", 0) or 0),
+        "train_down_years_ge_5pct": int(row.get("train_down_years_ge_5pct", 0) or 0),
+        "train_down_years_total": int(row.get("train_down_years_total", 0) or 0),
+    }
+
+
+def _dedupe_state_candidates(candidates: list[dict[str, object]]) -> list[dict[str, object]]:
+    dedup: dict[str, dict[str, object]] = {}
+    for row in candidates:
+        key = str(row.get("candidate_id") or json.dumps(row, sort_keys=True))
+        current = dedup.get(key)
+        if current is None or float(row.get("train_score", 0.0) or 0.0) > float(current.get("train_score", 0.0) or 0.0):
+            dedup[key] = row
+    return list(dedup.values())
+
+
+def _sanitize_state_candidate(row: dict[str, object]) -> dict[str, object]:
+    return {
+        "candidate_id": str(row.get("candidate_id", "")),
+        "specs": list(row.get("specs", [])),
+        "assets": list(row.get("assets", ["SPY"])),
+        "selector": str(row.get("selector", "momentum_26w")),
+        "intercept": float(row.get("intercept", 0.0) or 0.0),
+        "scale": float(row.get("scale", 1.0) or 1.0),
+        "smoothing": float(row.get("smoothing", 0.0) or 0.0),
+        "train_score": float(row.get("train_score", 0.0) or 0.0),
+        "train_years_positive": int(row.get("train_years_positive", 0) or 0),
+        "train_years_total": int(row.get("train_years_total", 0) or 0),
+        "train_down_years_ge_5pct": int(row.get("train_down_years_ge_5pct", 0) or 0),
+        "train_down_years_total": int(row.get("train_down_years_total", 0) or 0),
+    }
+
+
+def _stateful_method_summary(rows: pd.DataFrame, verified: pd.DataFrame) -> pd.DataFrame:
+    if rows.empty or "method" not in rows:
+        return pd.DataFrame()
+    records = []
+    for method, group in rows.groupby("method", sort=True):
+        group = group.sort_values("weekly_multi_asset_score", ascending=False)
+        method_verified = verified.loc[verified["method"] == method] if "method" in verified else pd.DataFrame()
+        records.append(
+            {
+                "method": method,
+                "rows": int(len(group)),
+                "verified_count": int(len(method_verified)),
+                "unique_verified_count": int(method_verified["candidate_id"].nunique()) if "candidate_id" in method_verified else 0,
+                "best_candidate": str(group.iloc[0].get("candidate_id", "")) if not group.empty else None,
+                "best_score_720m": float(group.iloc[0].get("weekly_multi_asset_score", np.nan)) if not group.empty else None,
+                "best_validation_min_year_return": _best_float(method_verified, "validation_min_year_return"),
+                "best_validation_down_min_return": _best_float(method_verified, "validation_down_min_return"),
+                "best_validation_cagr": _best_float(method_verified, "validation_cagr"),
+                "best_validation_mdd": _best_float(method_verified, "validation_mdd", highest=False),
+            }
+        )
+    return pd.DataFrame(records)
+
+
+def _stateful_efficiency(rows: pd.DataFrame, verified: pd.DataFrame) -> pd.DataFrame:
+    if rows.empty or "method" not in rows:
+        return pd.DataFrame()
+    records = []
+    for method, group in rows.groupby("method", sort=True):
+        method_verified = verified.loc[verified["method"] == method] if "method" in verified else pd.DataFrame()
+        max_elapsed = float(pd.to_numeric(group.get("elapsed_seconds", pd.Series(dtype=float)), errors="coerce").max() or 0.0)
+        hours = max(max_elapsed / 3600.0, 1e-9)
+        first = None
+        if not method_verified.empty and "first_seen_minute" in method_verified:
+            first = float(pd.to_numeric(method_verified["first_seen_minute"], errors="coerce").min())
+        records.append(
+            {
+                "method": method,
+                "rows": int(len(group)),
+                "verified_count": int(len(method_verified)),
+                "verified_per_hour": float(len(method_verified) / hours),
+                "time_to_first_verified": first,
+                "best_score_240m": _best_score_before(group, 240.0),
+                "best_score_480m": _best_score_before(group, 480.0),
+                "best_score_720m": _best_score_before(group, 720.0),
+            }
+        )
+    return pd.DataFrame(records)
+
+
+def _best_score_before(group: pd.DataFrame, minute: float) -> float | None:
+    if "first_seen_minute" not in group:
+        return None
+    subset = group.loc[pd.to_numeric(group["first_seen_minute"], errors="coerce") <= minute]
+    if subset.empty:
+        return None
+    return float(pd.to_numeric(subset["weekly_multi_asset_score"], errors="coerce").max())
+
+
+def _best_float(rows: pd.DataFrame, column: str, *, highest: bool = True) -> float | None:
+    if rows.empty or column not in rows:
+        return None
+    values = pd.to_numeric(rows[column], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return float(values.max() if highest else values.min())
+
+
+def _stage_summary(rows: list[dict[str, object]], *, method: str, wave: int, stage: int) -> dict[str, object]:
+    return {
+        "method": method,
+        "wave": int(wave),
+        "stage": int(stage),
+        "rows": int(len(rows)),
+        "accepted": int(sum(bool(row.get("accepted")) for row in rows)),
+        "verified_train_validation_5pct": int(sum(bool(row.get("verified_train_validation_5pct")) for row in rows)),
+        "best_candidate": str(rows[0].get("candidate_id")) if rows else None,
+        "locked_opened": False,
+        "validation_role": "report_only",
+    }
+
+
+def _empty_state(method: str, wave: int, stage: int) -> dict[str, object]:
+    return {
+        "method": method,
+        "wave": int(wave),
+        "stage": int(stage),
+        "candidate_count": 0,
+        "candidates": [],
+        "validation_role": "report_only",
+        "locked_opened": False,
+    }
+
+
+def _stateful_method_offset(method: str) -> int:
+    return {
+        "sobol_random_asha": 101_000,
+        "tpe_asha_lite": 113_000,
+        "dehb_lite": 127_000,
+        "bohb_lite": 131_000,
+        "smac_mf_lite": 137_000,
+        "beam": 149_000,
+        "genetic": 157_000,
+    }.get(method, 0)

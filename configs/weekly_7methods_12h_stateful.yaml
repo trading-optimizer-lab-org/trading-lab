@@ -1,0 +1,38 @@
+data_path: data/public/spy_daily.csv
+output_dir: outputs/weekly_7methods_12h
+start_year: 1994
+end_year: 2026
+train_start: "1994-01-01"
+train_end: "2007-12-31"
+validation_start: "2008-01-01"
+validation_end: "2019-12-31"
+locked_start: "2020-01-01"
+cash_return: 0.0
+min_down_year_return: 0.05
+min_train_year_return: 0.0
+max_abs_exposure: 1.0
+max_features: 8
+seed_pool: 5000
+beam_width: 160
+generations: 24
+mutations_per_parent: 36
+top_rows_per_stage: 500
+random_seed: 917000
+time_budget_minutes: 240
+waves: 3
+jobs_per_method_per_wave: 70
+score_mode: train_only_weekly_sp500_down_5pct
+validation_role: report_only
+locked_opened: false
+expected_train_years: 14
+expected_validation_years: 12
+expected_train_down_years: 3
+expected_validation_down_years: 2
+methods:
+  - sobol_random_asha
+  - tpe_asha_lite
+  - dehb_lite
+  - bohb_lite
+  - smac_mf_lite
+  - beam
+  - genetic

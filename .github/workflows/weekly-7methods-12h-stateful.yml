@@ -1,0 +1,415 @@
+name: Weekly Multi Asset SP500 Down 5pct 7 Methods 12h Stateful
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CONFIG: configs/weekly_7methods_12h_stateful.yaml
+  STAGES_35: "0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download public multi-asset panel
+        run: python scripts/download_public_data.py --feature-panel --output data/public/spy_daily.csv
+      - name: Upload public multi-asset panel
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7methods-public-panel
+          path: data/public/spy_daily.csv
+
+  search-wave-1-a:
+    runs-on: ubuntu-latest
+    needs: data
+    timeout-minutes: 270
+    strategy:
+      fail-fast: false
+      max-parallel: 245
+      matrix:
+        method: [sobol_random_asha, tpe_asha_lite, dehb_lite, bohb_lite, smac_mf_lite, beam, genetic]
+        stage: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download public panel
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-7methods-public-panel
+          path: data/public
+      - name: Run wave 1 block A
+        shell: bash
+        run: |
+          actual_stage="${{ matrix.stage }}"
+          python scripts/run_weekly_7methods_12h_stateful_search.py --config "$CONFIG" --method "${{ matrix.method }}" --wave 1 --stage "$actual_stage" --total-stages 70 --time-budget-minutes 240 --output-dir "outputs/weekly_7methods_12h/wave_1/${{ matrix.method }}/stage_${actual_stage}" --top-rows-per-stage 500
+      - name: Upload wave 1 block A stage
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7m-w1-a-${{ matrix.method }}-${{ matrix.stage }}
+          path: outputs/weekly_7methods_12h/wave_1/${{ matrix.method }}/stage_${{ matrix.stage }}
+
+  search-wave-1-b:
+    runs-on: ubuntu-latest
+    needs: data
+    timeout-minutes: 270
+    strategy:
+      fail-fast: false
+      max-parallel: 245
+      matrix:
+        method: [sobol_random_asha, tpe_asha_lite, dehb_lite, bohb_lite, smac_mf_lite, beam, genetic]
+        stage: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download public panel
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-7methods-public-panel
+          path: data/public
+      - name: Run wave 1 block B
+        shell: bash
+        run: |
+          actual_stage=$((35 + ${{ matrix.stage }}))
+          python scripts/run_weekly_7methods_12h_stateful_search.py --config "$CONFIG" --method "${{ matrix.method }}" --wave 1 --stage "$actual_stage" --total-stages 70 --time-budget-minutes 240 --output-dir "outputs/weekly_7methods_12h/wave_1/${{ matrix.method }}/stage_${actual_stage}" --top-rows-per-stage 500
+      - name: Upload wave 1 block B stage
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7m-w1-b-${{ matrix.method }}-${{ matrix.stage }}
+          path: outputs/weekly_7methods_12h/wave_1/${{ matrix.method }}/stage_*
+
+  state-wave-1:
+    runs-on: ubuntu-latest
+    needs: [search-wave-1-a, search-wave-1-b]
+    if: always()
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download wave 1 stages
+        uses: actions/download-artifact@v4
+        with:
+          path: outputs/weekly_7methods_12h/wave_1_artifacts
+          pattern: weekly-7m-w1-*
+      - name: Merge wave 1 state
+        run: python scripts/merge_weekly_7methods_12h_state.py --input-glob "outputs/weekly_7methods_12h/wave_1_artifacts/**/state/weekly_7methods_12h_state_*.json" --output-dir outputs/weekly_7methods_12h/state_wave_1 --state-top 500 --expected-files-per-method 70
+      - name: Upload wave 1 state
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7methods-12h-state-wave-1
+          path: outputs/weekly_7methods_12h/state_wave_1
+
+  search-wave-2-a:
+    runs-on: ubuntu-latest
+    needs: state-wave-1
+    timeout-minutes: 270
+    strategy:
+      fail-fast: false
+      max-parallel: 245
+      matrix:
+        method: [sobol_random_asha, tpe_asha_lite, dehb_lite, bohb_lite, smac_mf_lite, beam, genetic]
+        stage: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download public panel
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-7methods-public-panel
+          path: data/public
+      - name: Download wave 1 state
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-7methods-12h-state-wave-1
+          path: state_in
+      - name: Run wave 2 block A
+        shell: bash
+        run: |
+          actual_stage="${{ matrix.stage }}"
+          python scripts/run_weekly_7methods_12h_stateful_search.py --config "$CONFIG" --method "${{ matrix.method }}" --wave 2 --stage "$actual_stage" --total-stages 70 --time-budget-minutes 240 --state-dir state_in --output-dir "outputs/weekly_7methods_12h/wave_2/${{ matrix.method }}/stage_${actual_stage}" --top-rows-per-stage 500
+      - name: Upload wave 2 block A stage
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7m-w2-a-${{ matrix.method }}-${{ matrix.stage }}
+          path: outputs/weekly_7methods_12h/wave_2/${{ matrix.method }}/stage_${{ matrix.stage }}
+
+  search-wave-2-b:
+    runs-on: ubuntu-latest
+    needs: state-wave-1
+    timeout-minutes: 270
+    strategy:
+      fail-fast: false
+      max-parallel: 245
+      matrix:
+        method: [sobol_random_asha, tpe_asha_lite, dehb_lite, bohb_lite, smac_mf_lite, beam, genetic]
+        stage: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download public panel
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-7methods-public-panel
+          path: data/public
+      - name: Download wave 1 state
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-7methods-12h-state-wave-1
+          path: state_in
+      - name: Run wave 2 block B
+        shell: bash
+        run: |
+          actual_stage=$((35 + ${{ matrix.stage }}))
+          python scripts/run_weekly_7methods_12h_stateful_search.py --config "$CONFIG" --method "${{ matrix.method }}" --wave 2 --stage "$actual_stage" --total-stages 70 --time-budget-minutes 240 --state-dir state_in --output-dir "outputs/weekly_7methods_12h/wave_2/${{ matrix.method }}/stage_${actual_stage}" --top-rows-per-stage 500
+      - name: Upload wave 2 block B stage
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7m-w2-b-${{ matrix.method }}-${{ matrix.stage }}
+          path: outputs/weekly_7methods_12h/wave_2/${{ matrix.method }}/stage_*
+
+  state-wave-2:
+    runs-on: ubuntu-latest
+    needs: [search-wave-2-a, search-wave-2-b]
+    if: always()
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download wave 2 stages
+        uses: actions/download-artifact@v4
+        with:
+          path: outputs/weekly_7methods_12h/wave_2_artifacts
+          pattern: weekly-7m-w2-*
+      - name: Merge wave 2 state
+        run: python scripts/merge_weekly_7methods_12h_state.py --input-glob "outputs/weekly_7methods_12h/wave_2_artifacts/**/state/weekly_7methods_12h_state_*.json" --output-dir outputs/weekly_7methods_12h/state_wave_2 --state-top 500 --expected-files-per-method 70
+      - name: Upload wave 2 state
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7methods-12h-state-wave-2
+          path: outputs/weekly_7methods_12h/state_wave_2
+
+  search-wave-3-a:
+    runs-on: ubuntu-latest
+    needs: state-wave-2
+    timeout-minutes: 270
+    strategy:
+      fail-fast: false
+      max-parallel: 245
+      matrix:
+        method: [sobol_random_asha, tpe_asha_lite, dehb_lite, bohb_lite, smac_mf_lite, beam, genetic]
+        stage: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download public panel
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-7methods-public-panel
+          path: data/public
+      - name: Download wave 2 state
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-7methods-12h-state-wave-2
+          path: state_in
+      - name: Run wave 3 block A
+        shell: bash
+        run: |
+          actual_stage="${{ matrix.stage }}"
+          python scripts/run_weekly_7methods_12h_stateful_search.py --config "$CONFIG" --method "${{ matrix.method }}" --wave 3 --stage "$actual_stage" --total-stages 70 --time-budget-minutes 240 --state-dir state_in --output-dir "outputs/weekly_7methods_12h/wave_3/${{ matrix.method }}/stage_${actual_stage}" --top-rows-per-stage 500
+      - name: Upload wave 3 block A stage
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7m-w3-a-${{ matrix.method }}-${{ matrix.stage }}
+          path: outputs/weekly_7methods_12h/wave_3/${{ matrix.method }}/stage_${{ matrix.stage }}
+
+  search-wave-3-b:
+    runs-on: ubuntu-latest
+    needs: state-wave-2
+    timeout-minutes: 270
+    strategy:
+      fail-fast: false
+      max-parallel: 245
+      matrix:
+        method: [sobol_random_asha, tpe_asha_lite, dehb_lite, bohb_lite, smac_mf_lite, beam, genetic]
+        stage: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download public panel
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-7methods-public-panel
+          path: data/public
+      - name: Download wave 2 state
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-7methods-12h-state-wave-2
+          path: state_in
+      - name: Run wave 3 block B
+        shell: bash
+        run: |
+          actual_stage=$((35 + ${{ matrix.stage }}))
+          python scripts/run_weekly_7methods_12h_stateful_search.py --config "$CONFIG" --method "${{ matrix.method }}" --wave 3 --stage "$actual_stage" --total-stages 70 --time-budget-minutes 240 --state-dir state_in --output-dir "outputs/weekly_7methods_12h/wave_3/${{ matrix.method }}/stage_${actual_stage}" --top-rows-per-stage 500
+      - name: Upload wave 3 block B stage
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7m-w3-b-${{ matrix.method }}-${{ matrix.stage }}
+          path: outputs/weekly_7methods_12h/wave_3/${{ matrix.method }}/stage_*
+
+  state-wave-3:
+    runs-on: ubuntu-latest
+    needs: [search-wave-3-a, search-wave-3-b]
+    if: always()
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download wave 3 stages
+        uses: actions/download-artifact@v4
+        with:
+          path: outputs/weekly_7methods_12h/wave_3_artifacts
+          pattern: weekly-7m-w3-*
+      - name: Merge wave 3 state
+        run: python scripts/merge_weekly_7methods_12h_state.py --input-glob "outputs/weekly_7methods_12h/wave_3_artifacts/**/state/weekly_7methods_12h_state_*.json" --output-dir outputs/weekly_7methods_12h/state_wave_3 --state-top 500 --expected-files-per-method 70
+      - name: Upload wave 3 state
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7methods-12h-state-wave-3
+          path: outputs/weekly_7methods_12h/state_wave_3
+
+  merge-method:
+    runs-on: ubuntu-latest
+    needs: state-wave-3
+    if: always()
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 7
+      matrix:
+        method: [sobol_random_asha, tpe_asha_lite, dehb_lite, bohb_lite, smac_mf_lite, beam, genetic]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download method stages
+        uses: actions/download-artifact@v4
+        with:
+          path: outputs/weekly_7methods_12h/stages/${{ matrix.method }}
+          pattern: weekly-7m-w*-${{ matrix.method }}-*
+      - name: Merge method stages
+        run: python scripts/merge_weekly_7methods_12h_leaderboards.py --config "$CONFIG" --input-glob "outputs/weekly_7methods_12h/stages/${{ matrix.method }}/**/weekly_7methods_12h_leaderboard_stage_*.csv" --output-dir outputs/weekly_7methods_12h/method_merges/${{ matrix.method }} --skip-examples --max-output-rows 20000
+      - name: Upload method merge
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7methods-12h-method-merge-${{ matrix.method }}
+          path: |
+            outputs/weekly_7methods_12h/method_merges/${{ matrix.method }}/weekly_7methods_12h_leaderboard.csv
+            outputs/weekly_7methods_12h/method_merges/${{ matrix.method }}/weekly_7methods_12h_verified.csv
+            outputs/weekly_7methods_12h/method_merges/${{ matrix.method }}/weekly_7methods_12h_methods.csv
+            outputs/weekly_7methods_12h/method_merges/${{ matrix.method }}/weekly_7methods_12h_efficiency.csv
+            outputs/weekly_7methods_12h/method_merges/${{ matrix.method }}/weekly_7methods_12h_summary.json
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: [merge-method, state-wave-3]
+    if: always()
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download method merges
+        uses: actions/download-artifact@v4
+        with:
+          path: outputs/weekly_7methods_12h/method_merges
+          pattern: weekly-7methods-12h-method-merge-*
+      - name: Download final state
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-7methods-12h-state-wave-3
+          path: outputs/weekly_7methods_12h/final_state
+      - name: Download public panel
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-7methods-public-panel
+          path: data/public
+      - name: Merge all methods
+        run: python scripts/merge_weekly_7methods_12h_leaderboards.py --config "$CONFIG" --input-glob "outputs/weekly_7methods_12h/method_merges/**/weekly_7methods_12h_leaderboard.csv" --output-dir outputs/weekly_7methods_12h --max-output-rows 50000
+      - name: Upload final leaderboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7methods-12h-stateful-sp500-down-5pct-leaderboard
+          path: |
+            outputs/weekly_7methods_12h/weekly_7methods_12h_leaderboard.csv
+            outputs/weekly_7methods_12h/weekly_7methods_12h_verified.csv
+            outputs/weekly_7methods_12h/weekly_7methods_12h_methods.csv
+            outputs/weekly_7methods_12h/weekly_7methods_12h_efficiency.csv
+            outputs/weekly_7methods_12h/weekly_7methods_12h_summary.json
+            outputs/weekly_7methods_12h/weekly_7methods_12h_year_by_year.csv
+            outputs/weekly_7methods_12h/weekly_7methods_12h_weekly_positions.csv
+            outputs/weekly_7methods_12h/final_state/weekly_7methods_12h_state_summary.json

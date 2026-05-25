@@ -270,6 +270,34 @@ def test_heavy_workflows_do_not_run_on_push() -> None:
         assert "push:" not in text
 
 
+def test_weekly_7methods_12h_stateful_workflow_is_manual_balanced_and_locked_closed() -> None:
+    text = Path(".github/workflows/weekly-7methods-12h-stateful.yml").read_text(encoding="utf-8")
+    config = Path("configs/weekly_7methods_12h_stateful.yaml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch" in text
+    assert "push:" not in text
+    assert "max-parallel: 245" in text
+    assert text.count("--time-budget-minutes 240") == 6
+    assert text.count("--expected-files-per-method 70") == 3
+    assert "weekly-7methods-12h-stateful-sp500-down-5pct-leaderboard" in text
+    assert "weekly-7methods-public-panel" in text
+    for method in (
+        "sobol_random_asha",
+        "tpe_asha_lite",
+        "dehb_lite",
+        "bohb_lite",
+        "smac_mf_lite",
+        "beam",
+        "genetic",
+    ):
+        assert method in text
+        assert f"  - {method}" in config
+    assert "jobs_per_method_per_wave: 70" in config
+    assert "waves: 3" in config
+    assert "validation_role: report_only" in config
+    assert "locked_opened: false" in config
+
+
 def test_ci_is_manual_or_pull_request_only() -> None:
     text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 
