@@ -437,6 +437,26 @@ def test_weekly_7methods_overnight_stop_can_cancel_with_actions_write() -> None:
     assert "gh api -X POST" in text
 
 
+def test_weekly_7methods_start_overnight_after_fair_is_github_native() -> None:
+    text = Path(".github/workflows/weekly-7methods-start-overnight-after-fair.yml").read_text(encoding="utf-8")
+
+    assert "workflow_run:" in text
+    assert "Weekly Multi Asset SP500 Down 5pct 7 Methods 5h Fair Real HPO" in text
+    assert "workflow_dispatch:" in text
+    assert "actions: write" in text
+    assert "concurrency:" in text
+    assert "FAIR_WORKFLOW: weekly-7methods-5h-fair.yml" in text
+    assert "OVERNIGHT_WORKFLOW: weekly-7methods-overnight-search.yml" in text
+    assert "status=in_progress" in text
+    assert "status=queued" in text
+    assert "not starting duplicate" in text
+    assert '"waves": "9"' in text
+    assert '"minutes_per_method_stage": "55"' in text
+    assert '"stages_per_method": "35"' in text
+    assert '"max_parallel": "245"' in text
+    assert "/dispatches" in text
+
+
 def test_ci_is_manual_or_pull_request_only() -> None:
     text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 

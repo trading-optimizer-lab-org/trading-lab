@@ -1,0 +1,78 @@
+name: Weekly 7 Methods Start Overnight After Fair HPO
+
+on:
+  workflow_run:
+    workflows:
+      - Weekly Multi Asset SP500 Down 5pct 7 Methods 5h Fair Real HPO
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: weekly-7methods-start-overnight-after-fair
+  cancel-in-progress: false
+
+jobs:
+  maybe-start-overnight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Start overnight only after all Fair HPO runs finish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          FAIR_WORKFLOW: weekly-7methods-5h-fair.yml
+          OVERNIGHT_WORKFLOW: weekly-7methods-overnight-search.yml
+        run: |
+          set -euo pipefail
+
+          active_fair="$(
+            gh api "repos/${REPO}/actions/workflows/${FAIR_WORKFLOW}/runs?status=in_progress&per_page=100" --jq '.total_count'
+          )"
+          queued_fair="$(
+            gh api "repos/${REPO}/actions/workflows/${FAIR_WORKFLOW}/runs?status=queued&per_page=100" --jq '.total_count'
+          )"
+          active_overnight="$(
+            gh api "repos/${REPO}/actions/workflows/${OVERNIGHT_WORKFLOW}/runs?status=in_progress&per_page=100" --jq '.total_count'
+          )"
+          queued_overnight="$(
+            gh api "repos/${REPO}/actions/workflows/${OVERNIGHT_WORKFLOW}/runs?status=queued&per_page=100" --jq '.total_count'
+          )"
+
+          echo "active_fair=${active_fair}"
+          echo "queued_fair=${queued_fair}"
+          echo "active_overnight=${active_overnight}"
+          echo "queued_overnight=${queued_overnight}"
+
+          if [ "$active_fair" -ne 0 ] || [ "$queued_fair" -ne 0 ]; then
+            echo "Fair HPO still active; not starting overnight yet."
+            exit 0
+          fi
+
+          if [ "$active_overnight" -ne 0 ] || [ "$queued_overnight" -ne 0 ]; then
+            echo "Overnight search already active or queued; not starting duplicate."
+            exit 0
+          fi
+
+          cat > dispatch.json <<'JSON'
+          {
+            "ref": "main",
+            "inputs": {
+              "waves": "9",
+              "minutes_per_method_stage": "55",
+              "stages_per_method": "35",
+              "max_parallel": "245"
+            }
+          }
+          JSON
+
+          gh api \
+            -X POST \
+            "repos/${REPO}/actions/workflows/${OVERNIGHT_WORKFLOW}/dispatches" \
+            --input dispatch.json
+
+          echo "Started Weekly 7 Methods Overnight Search with waves=9, minutes_per_method_stage=55, stages_per_method=35, max_parallel=245."
