@@ -317,12 +317,13 @@ def test_weekly_7methods_5h_fair_workflow_runs_one_balanced_wave_from_zero() -> 
     config = Path("configs/weekly_7methods_5h_fair.yaml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch" in text
-    assert "push:" in text
-    assert ".github/weekly-7methods-5h-trigger.txt" in text
+    assert "push:" not in text
+    assert ".github/weekly-7methods-5h-trigger.txt" not in text
     assert "dependency-smoke:" in text
     assert "scripts/smoke_weekly_real_hpo_dependencies.py" in text
     assert 'python -m pip install -e ".[dev,hpo]"' in text
     assert "max-parallel: 245" in text
+    assert text.index("stage: [0, 1, 2") < text.index("method: [sobol_random_asha_real")
     assert "--total-stages 35" in text
     assert "--time-budget-minutes \"$budget_minutes\"" in text
     assert "--file-prefix \"$FILE_PREFIX\"" in text
@@ -348,6 +349,20 @@ def test_weekly_7methods_5h_fair_workflow_runs_one_balanced_wave_from_zero() -> 
     assert "partial: false" in config
     assert "validation_role: report_only" in config
     assert "locked_opened: false" in config
+
+
+def test_github_actions_unblock_smoke_is_manual_single_checkout_job() -> None:
+    text = Path(".github/workflows/github-actions-unblock-smoke.yml").read_text(encoding="utf-8")
+
+    assert "name: GitHub Actions Unblock Smoke" in text
+    assert "workflow_dispatch" in text
+    assert "push:" not in text
+    assert "matrix:" not in text
+    assert "actions/checkout@v4" in text
+    assert "echo checkout_ok" in text
+    assert "timeout-minutes: 10" in text
+    assert "upload-artifact" not in text
+    assert "pip install" not in text
 
 
 def test_ci_is_manual_or_pull_request_only() -> None:

@@ -2,11 +2,6 @@ name: Weekly Multi Asset SP500 Down 5pct 7 Methods 5h Fair Real HPO
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - .github/weekly-7methods-5h-trigger.txt
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -68,8 +63,8 @@ jobs:
       fail-fast: false
       max-parallel: 245
       matrix:
-        method: [sobol_random_asha_real, optuna_tpe_hyperband, dehb_real, bohb_real, smac_mf_real, beam, genetic]
         stage: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]
+        method: [sobol_random_asha_real, optuna_tpe_hyperband, dehb_real, bohb_real, smac_mf_real, beam, genetic]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
