@@ -1,0 +1,140 @@
+name: Weekly Multi Asset SP500 Down 5pct 7 Methods 5h Fair
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CONFIG: configs/weekly_7methods_5h_fair.yaml
+  OUTPUT_DIR: outputs/weekly_7methods_5h_fair
+  FILE_PREFIX: weekly_7methods_5h_fair
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      deadline_epoch: ${{ steps.clock.outputs.deadline_epoch }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set 5h deadline
+        id: clock
+        shell: bash
+        run: echo "deadline_epoch=$(($(date +%s) + 18000))" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download public multi-asset panel
+        run: python scripts/download_public_data.py --feature-panel --output data/public/spy_daily.csv
+      - name: Upload public multi-asset panel
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7methods-5h-public-panel
+          path: data/public/spy_daily.csv
+
+  search:
+    runs-on: ubuntu-latest
+    needs: data
+    timeout-minutes: 270
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 245
+      matrix:
+        method: [sobol_random_asha_real, optuna_tpe_hyperband, dehb_real, bohb_real, smac_mf_real, beam, genetic]
+        stage: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download public panel
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-7methods-5h-public-panel
+          path: data/public
+      - name: Run fair 5h stage
+        shell: bash
+        run: |
+          deadline="${{ needs.data.outputs.deadline_epoch }}"
+          now="$(date +%s)"
+          reserve_seconds=1800
+          remaining_seconds=$((deadline - now - reserve_seconds))
+          if [ "$remaining_seconds" -lt 60 ]; then
+            budget_minutes=1
+          else
+            budget_minutes=$((remaining_seconds / 60))
+            if [ "$budget_minutes" -gt 240 ]; then
+              budget_minutes=240
+            fi
+          fi
+          echo "Using ${budget_minutes} minutes for method=${{ matrix.method }} stage=${{ matrix.stage }}"
+          python scripts/run_weekly_7methods_12h_stateful_search.py \
+            --config "$CONFIG" \
+            --method "${{ matrix.method }}" \
+            --wave 1 \
+            --stage "${{ matrix.stage }}" \
+            --total-stages 35 \
+            --time-budget-minutes "$budget_minutes" \
+            --output-dir "$OUTPUT_DIR/stages/${{ matrix.method }}/stage_${{ matrix.stage }}" \
+            --file-prefix "$FILE_PREFIX" \
+            --top-rows-per-stage 500
+      - name: Upload fair 5h stage
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7m-5h-stage-${{ matrix.method }}-${{ matrix.stage }}
+          path: ${{ env.OUTPUT_DIR }}/stages/${{ matrix.method }}/stage_${{ matrix.stage }}
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: [data, search]
+    if: always()
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download fair 5h stages
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ env.OUTPUT_DIR }}/stage_artifacts
+          pattern: weekly-7m-5h-stage-*
+      - name: Download public panel
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-7methods-5h-public-panel
+          path: data/public
+      - name: Merge all methods
+        run: |
+          python scripts/merge_weekly_7methods_12h_leaderboards.py \
+            --config "$CONFIG" \
+            --input-glob "$OUTPUT_DIR/stage_artifacts/**/${FILE_PREFIX}_leaderboard_stage_*.csv" \
+            --output-dir "$OUTPUT_DIR" \
+            --file-prefix "$FILE_PREFIX" \
+            --max-output-rows 50000
+      - name: Upload final leaderboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7methods-5h-fair-leaderboard
+          path: |
+            outputs/weekly_7methods_5h_fair/weekly_7methods_5h_fair_leaderboard.csv
+            outputs/weekly_7methods_5h_fair/weekly_7methods_5h_fair_verified.csv
+            outputs/weekly_7methods_5h_fair/weekly_7methods_5h_fair_methods.csv
+            outputs/weekly_7methods_5h_fair/weekly_7methods_5h_fair_efficiency.csv
+            outputs/weekly_7methods_5h_fair/weekly_7methods_5h_fair_summary.json
+            outputs/weekly_7methods_5h_fair/weekly_7methods_5h_fair_year_by_year.csv
+            outputs/weekly_7methods_5h_fair/weekly_7methods_5h_fair_weekly_positions.csv

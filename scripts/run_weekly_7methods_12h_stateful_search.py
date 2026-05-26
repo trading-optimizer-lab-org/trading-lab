@@ -13,7 +13,7 @@ from trading_lab.data_loader import load_market_data  # noqa: E402
 from trading_lab.monthly_risk import MonthlyRiskSearchConfig  # noqa: E402
 from trading_lab.public_data import download_yahoo_chart  # noqa: E402
 from trading_lab.weekly_7methods_stateful import (  # noqa: E402
-    STATEFUL_WEEKLY_METHODS,
+    ALL_STATEFUL_WEEKLY_METHODS,
     run_stateful_weekly_search,
     write_stateful_weekly_outputs,
 )
@@ -23,7 +23,7 @@ from trading_lab.weekly_multi_asset import build_weekly_multi_asset_examples  # 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run one stateful weekly 7-method search shard.")
     parser.add_argument("--config", default="configs/weekly_multi_asset_sp500_down_5pct.yaml")
-    parser.add_argument("--method", required=True, choices=STATEFUL_WEEKLY_METHODS)
+    parser.add_argument("--method", required=True, choices=ALL_STATEFUL_WEEKLY_METHODS)
     parser.add_argument("--wave", type=int, required=True)
     parser.add_argument("--stage", type=int, required=True)
     parser.add_argument("--total-stages", type=int, default=70)
@@ -36,6 +36,7 @@ def main() -> int:
     parser.add_argument("--max-features", type=int, default=None)
     parser.add_argument("--top-rows-per-stage", type=int, default=500)
     parser.add_argument("--output-dir", default=None)
+    parser.add_argument("--file-prefix", default="weekly_7methods_12h")
     parser.add_argument("--random-seed", type=int, default=None)
     args = parser.parse_args()
 
@@ -77,7 +78,7 @@ def main() -> int:
             time_budget_minutes=args.time_budget_minutes,
             state_dir=args.state_dir,
         )
-        write_stateful_weekly_outputs(rows, state, output_dir, method=args.method, wave=args.wave, stage=args.stage)
+        write_stateful_weekly_outputs(rows, state, output_dir, method=args.method, wave=args.wave, stage=args.stage, file_prefix=args.file_prefix)
     except Exception as exc:
         output_dir.mkdir(parents=True, exist_ok=True)
         rows = [
@@ -95,7 +96,15 @@ def main() -> int:
                 "validation_role": "report_only",
             }
         ]
-        write_stateful_weekly_outputs(rows, {"method": args.method, "candidates": []}, output_dir, method=args.method, wave=args.wave, stage=args.stage)
+        write_stateful_weekly_outputs(
+            rows,
+            {"method": args.method, "candidates": []},
+            output_dir,
+            method=args.method,
+            wave=args.wave,
+            stage=args.stage,
+            file_prefix=args.file_prefix,
+        )
     print(
         json.dumps(
             {

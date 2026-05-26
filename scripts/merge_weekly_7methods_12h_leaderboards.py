@@ -23,11 +23,12 @@ def main() -> int:
     parser.add_argument("--config", default="configs/weekly_multi_asset_sp500_down_5pct.yaml")
     parser.add_argument("--skip-examples", action="store_true")
     parser.add_argument("--max-output-rows", type=int, default=50_000)
+    parser.add_argument("--file-prefix", default="weekly_7methods_12h")
     args = parser.parse_args()
 
+    raw_config = load_yaml(args.config)
     examples = None
     if not args.skip_examples:
-        raw_config = load_yaml(args.config)
         daily = load_market_data(raw_config.get("data_path", "data/public/spy_daily.csv"))
         try:
             benchmark_daily = download_yahoo_chart("^GSPC")
@@ -40,7 +41,14 @@ def main() -> int:
             end_year=int(raw_config.get("end_year", 2026)),
         )
     paths = sorted(glob.glob(args.input_glob, recursive=True))
-    summary = merge_stateful_weekly_leaderboards(paths, args.output_dir, examples=examples, max_output_rows=args.max_output_rows)
+    summary = merge_stateful_weekly_leaderboards(
+        paths,
+        args.output_dir,
+        examples=examples,
+        max_output_rows=args.max_output_rows,
+        file_prefix=args.file_prefix,
+        expected_methods=raw_config.get("methods"),
+    )
     print(json.dumps({"input_files": len(paths), **summary}, indent=2, sort_keys=True))
     return 0
 

@@ -7,7 +7,9 @@ import pandas as pd
 import pytest
 
 from trading_lab.weekly_7methods_stateful import (
+    FAIR_5H_WEEKLY_METHODS,
     STATEFUL_WEEKLY_METHODS,
+    _engine_method,
     _strict_verified,
     merge_state_files,
 )
@@ -44,6 +46,17 @@ def test_strict_verified_requires_exact_train_validation_counts() -> None:
     verified = _strict_verified(rows)
 
     assert verified["candidate_id"].tolist() == ["ok"]
+
+
+def test_5h_public_methods_map_to_existing_engines() -> None:
+    assert len(FAIR_5H_WEEKLY_METHODS) == 7
+    assert _engine_method("sobol_random_asha_real") == "sobol_random_asha"
+    assert _engine_method("optuna_tpe_hyperband") == "tpe_asha_lite"
+    assert _engine_method("dehb_real") == "dehb_lite"
+    assert _engine_method("bohb_real") == "bohb_lite"
+    assert _engine_method("smac_mf_real") == "smac_mf_lite"
+    assert _engine_method("beam") == "beam"
+    assert _engine_method("genetic") == "genetic"
 
 
 def test_state_merge_keeps_train_only_state_and_counts_methods(tmp_path: Path) -> None:

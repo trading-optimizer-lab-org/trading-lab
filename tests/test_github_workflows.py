@@ -312,6 +312,40 @@ def test_weekly_7methods_12h_merge_only_recovers_method_merges_from_source_run()
     assert "weekly-7methods-12h-wave1-recovered-leaderboard" in text
 
 
+def test_weekly_7methods_5h_fair_workflow_runs_one_balanced_wave_from_zero() -> None:
+    text = Path(".github/workflows/weekly-7methods-5h-fair.yml").read_text(encoding="utf-8")
+    config = Path("configs/weekly_7methods_5h_fair.yaml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch" in text
+    assert "push:" not in text
+    assert "max-parallel: 245" in text
+    assert "--total-stages 35" in text
+    assert "--time-budget-minutes \"$budget_minutes\"" in text
+    assert "--file-prefix \"$FILE_PREFIX\"" in text
+    assert "weekly-7methods-5h-fair-leaderboard" in text
+    assert "weekly_7methods_5h_fair_leaderboard.csv" in text
+    assert "state-dir" not in text
+    assert "deadline_epoch=$(($(date +%s) + 18000))" in text
+    for method in (
+        "sobol_random_asha_real",
+        "optuna_tpe_hyperband",
+        "dehb_real",
+        "bohb_real",
+        "smac_mf_real",
+        "beam",
+        "genetic",
+    ):
+        assert method in text
+        assert f"  - {method}" in config
+    assert "jobs_per_method: 35" in config
+    assert "total_search_jobs: 245" in config
+    assert "waves: 1" in config
+    assert "stateful: false" in config
+    assert "partial: false" in config
+    assert "validation_role: report_only" in config
+    assert "locked_opened: false" in config
+
+
 def test_ci_is_manual_or_pull_request_only() -> None:
     text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 

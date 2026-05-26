@@ -44,6 +44,26 @@ STATEFUL_WEEKLY_METHODS = (
     "genetic",
 )
 
+FAIR_5H_WEEKLY_METHODS = (
+    "sobol_random_asha_real",
+    "optuna_tpe_hyperband",
+    "dehb_real",
+    "bohb_real",
+    "smac_mf_real",
+    "beam",
+    "genetic",
+)
+
+ALL_STATEFUL_WEEKLY_METHODS = tuple(dict.fromkeys((*STATEFUL_WEEKLY_METHODS, *FAIR_5H_WEEKLY_METHODS)))
+
+METHOD_ENGINE_ALIASES = {
+    "sobol_random_asha_real": "sobol_random_asha",
+    "optuna_tpe_hyperband": "tpe_asha_lite",
+    "dehb_real": "dehb_lite",
+    "bohb_real": "bohb_lite",
+    "smac_mf_real": "smac_mf_lite",
+}
+
 EXPECTED_TRAIN_YEARS = 14
 EXPECTED_VALIDATION_YEARS = 12
 EXPECTED_TRAIN_DOWN_YEARS = 3
@@ -62,13 +82,14 @@ def run_stateful_weekly_search(
     time_budget_minutes: float,
     state_dir: str | Path | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
-    if method not in STATEFUL_WEEKLY_METHODS:
+    if method not in ALL_STATEFUL_WEEKLY_METHODS:
         raise ValueError(f"unknown stateful weekly method: {method}")
     catalog = _build_weekly_spec_catalog(examples)
     assets = _available_assets_from_examples(examples)
     if not catalog or not assets:
         return [], _empty_state(method, wave, stage)
 
+    engine_method = _engine_method(method)
     seed = int(config.random_seed + wave * 1_000_000 + stage * 10_000 + _stateful_method_offset(method))
     rng = np.random.default_rng(seed)
     prior_state = load_method_state(state_dir, method)
@@ -84,7 +105,7 @@ def run_stateful_weekly_search(
         rows.extend(_evaluate_and_stamp(examples, prior_candidates, seen, method=method, wave=wave, stage=stage, start=start))
 
     while time.monotonic() < deadline or iteration == 0:
-        candidates = _next_candidates(method, catalog, assets, config=config, rng=rng, rows=rows, prior=prior_candidates, iteration=iteration)
+        candidates = _next_candidates(engine_method, catalog, assets, config=config, rng=rng, rows=rows, prior=prior_candidates, iteration=iteration)
         if not candidates:
             break
         child_rows = _evaluate_and_stamp(examples, candidates, seen, method=method, wave=wave, stage=stage, start=start)
@@ -106,20 +127,21 @@ def write_stateful_weekly_outputs(
     method: str,
     wave: int,
     stage: int,
+    file_prefix: str = "weekly_7methods_12h",
 ) -> None:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     leaderboard = pd.DataFrame(rows)
-    leaderboard.to_csv(output / "weekly_7methods_12h_leaderboard.csv", index=False)
-    leaderboard.to_csv(output / f"weekly_7methods_12h_leaderboard_stage_{method}_{wave}_{stage}.csv", index=False)
+    leaderboard.to_csv(output / f"{file_prefix}_leaderboard.csv", index=False)
+    leaderboard.to_csv(output / f"{file_prefix}_leaderboard_stage_{method}_{wave}_{stage}.csv", index=False)
     verified = _strict_verified(leaderboard)
-    verified.to_csv(output / "weekly_7methods_12h_verified.csv", index=False)
+    verified.to_csv(output / f"{file_prefix}_verified.csv", index=False)
     state_dir = output / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
-    state_path = state_dir / f"weekly_7methods_12h_state_{method}_{wave}_{stage}.json"
+    state_path = state_dir / f"{file_prefix}_state_{method}_{wave}_{stage}.json"
     state_path.write_text(json.dumps(_json_safe(state), indent=2, sort_keys=True), encoding="utf-8")
     summary = _stage_summary(rows, method=method, wave=wave, stage=stage)
-    (output / "weekly_7methods_12h_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    (output / f"{file_prefix}_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def merge_state_files(
@@ -205,6 +227,8 @@ def merge_stateful_weekly_leaderboards(
     *,
     examples: pd.DataFrame | None = None,
     max_output_rows: int = 50_000,
+    file_prefix: str = "weekly_7methods_12h",
+    expected_methods: Iterable[str] | None = None,
 ) -> dict[str, object]:
     temp = Path(output_dir) / "_weekly_multi_temp"
     summary = merge_weekly_multi_asset_leaderboards(paths, temp, examples=examples, progress_every=25, max_output_rows=max_output_rows)
@@ -212,29 +236,30 @@ def merge_stateful_weekly_leaderboards(
     output.mkdir(parents=True, exist_ok=True)
 
     name_map = {
-        "weekly_multi_asset_sp500_down_5pct_leaderboard.csv": "weekly_7methods_12h_leaderboard.csv",
-        "weekly_multi_asset_sp500_down_5pct_verified.csv": "weekly_7methods_12h_verified.csv",
-        "weekly_multi_asset_sp500_down_5pct_methods.csv": "weekly_7methods_12h_methods.csv",
-        "weekly_multi_asset_sp500_down_5pct_summary.json": "weekly_7methods_12h_summary.json",
-        "weekly_multi_asset_sp500_down_5pct_year_by_year.csv": "weekly_7methods_12h_year_by_year.csv",
-        "weekly_multi_asset_sp500_down_5pct_weekly_positions.csv": "weekly_7methods_12h_weekly_positions.csv",
+        "weekly_multi_asset_sp500_down_5pct_leaderboard.csv": f"{file_prefix}_leaderboard.csv",
+        "weekly_multi_asset_sp500_down_5pct_verified.csv": f"{file_prefix}_verified.csv",
+        "weekly_multi_asset_sp500_down_5pct_methods.csv": f"{file_prefix}_methods.csv",
+        "weekly_multi_asset_sp500_down_5pct_summary.json": f"{file_prefix}_summary.json",
+        "weekly_multi_asset_sp500_down_5pct_year_by_year.csv": f"{file_prefix}_year_by_year.csv",
+        "weekly_multi_asset_sp500_down_5pct_weekly_positions.csv": f"{file_prefix}_weekly_positions.csv",
     }
     for source, target in name_map.items():
         source_path = temp / source
         if source_path.exists():
             (output / target).write_bytes(source_path.read_bytes())
 
-    leaderboard_path = output / "weekly_7methods_12h_leaderboard.csv"
+    leaderboard_path = output / f"{file_prefix}_leaderboard.csv"
     if leaderboard_path.exists():
         leaderboard = pd.read_csv(leaderboard_path)
     else:
         leaderboard = pd.DataFrame()
     verified = _strict_verified(leaderboard)
-    verified.to_csv(output / "weekly_7methods_12h_verified.csv", index=False)
-    methods = _stateful_method_summary(leaderboard, verified)
-    methods.to_csv(output / "weekly_7methods_12h_methods.csv", index=False)
+    verified.to_csv(output / f"{file_prefix}_verified.csv", index=False)
+    method_summary = _stateful_method_summary(leaderboard, verified)
+    method_summary.to_csv(output / f"{file_prefix}_methods.csv", index=False)
     efficiency = _stateful_efficiency(leaderboard, verified)
-    efficiency.to_csv(output / "weekly_7methods_12h_efficiency.csv", index=False)
+    efficiency.to_csv(output / f"{file_prefix}_efficiency.csv", index=False)
+    method_list = list(expected_methods if expected_methods is not None else STATEFUL_WEEKLY_METHODS)
 
     final_summary = {
         **summary,
@@ -243,16 +268,21 @@ def merge_stateful_weekly_leaderboards(
         "unique_verified_train_validation_5pct": int(verified["candidate_id"].nunique()) if "candidate_id" in verified else 0,
         "best_candidate": str(leaderboard.iloc[0]["candidate_id"]) if not leaderboard.empty else None,
         "best_method": str(leaderboard.iloc[0].get("method", "")) if not leaderboard.empty else None,
+        "best_train_score": float(leaderboard.iloc[0].get("weekly_multi_asset_score", 0.0)) if not leaderboard.empty else None,
         "best_verified_candidate": str(verified.iloc[0]["candidate_id"]) if not verified.empty else None,
+        "jobs_started": _unique_stage_count(leaderboard),
+        "jobs_completed": _unique_stage_count(leaderboard),
+        "jobs_failed": _failed_stage_count(leaderboard),
+        "partial": False,
         "locked_opened": False,
         "validation_role": "report_only",
-        "methods": list(STATEFUL_WEEKLY_METHODS),
+        "methods": method_list,
         "expected_train_years": EXPECTED_TRAIN_YEARS,
         "expected_validation_years": EXPECTED_VALIDATION_YEARS,
         "expected_train_down_years": EXPECTED_TRAIN_DOWN_YEARS,
         "expected_validation_down_years": EXPECTED_VALIDATION_DOWN_YEARS,
     }
-    (output / "weekly_7methods_12h_summary.json").write_text(json.dumps(_json_safe(final_summary), indent=2, sort_keys=True), encoding="utf-8")
+    (output / f"{file_prefix}_summary.json").write_text(json.dumps(_json_safe(final_summary), indent=2, sort_keys=True), encoding="utf-8")
     return final_summary
 
 
@@ -295,7 +325,10 @@ def _next_candidates(
     prior: list[WeeklyMultiAssetCandidate],
     iteration: int,
 ) -> list[WeeklyMultiAssetCandidate]:
-    batch_size = max(32, min(512, config.beam_width * max(1, config.mutations_per_parent // 4)))
+    batch_size = min(
+        max(32, min(512, config.beam_width * max(1, config.mutations_per_parent // 4))),
+        max(1, int(config.seed_pool)),
+    )
     if iteration == 0 and not rows:
         return _seed_candidates_lite(catalog, assets, config=config, rng=rng, method=method, limit=batch_size)
     if method == "beam":
@@ -620,6 +653,21 @@ def _best_float(rows: pd.DataFrame, column: str, *, highest: bool = True) -> flo
     return float(values.max() if highest else values.min())
 
 
+def _unique_stage_count(rows: pd.DataFrame) -> int:
+    if rows.empty or "method" not in rows or "stage" not in rows:
+        return 0
+    if "wave" in rows:
+        return int(rows[["method", "wave", "stage"]].drop_duplicates().shape[0])
+    return int(rows[["method", "stage"]].drop_duplicates().shape[0])
+
+
+def _failed_stage_count(rows: pd.DataFrame) -> int:
+    if rows.empty or "stage_failed" not in rows:
+        return 0
+    failed = rows.loc[rows["stage_failed"].astype(str).str.lower().isin(("true", "1"))]
+    return _unique_stage_count(failed)
+
+
 def _stage_summary(rows: list[dict[str, object]], *, method: str, wave: int, stage: int) -> dict[str, object]:
     return {
         "method": method,
@@ -653,6 +701,15 @@ def _stateful_method_offset(method: str) -> int:
         "dehb_lite": 127_000,
         "bohb_lite": 131_000,
         "smac_mf_lite": 137_000,
+        "sobol_random_asha_real": 141_000,
+        "optuna_tpe_hyperband": 143_000,
+        "dehb_real": 145_000,
+        "bohb_real": 147_000,
+        "smac_mf_real": 148_000,
         "beam": 149_000,
         "genetic": 157_000,
     }.get(method, 0)
+
+
+def _engine_method(method: str) -> str:
+    return METHOD_ENGINE_ALIASES.get(method, method)
