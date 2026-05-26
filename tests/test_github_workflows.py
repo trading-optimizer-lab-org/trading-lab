@@ -331,6 +331,10 @@ def test_weekly_7methods_5h_fair_workflow_runs_one_balanced_wave_from_zero() -> 
     assert "weekly_7methods_5h_fair_leaderboard.csv" in text
     assert "state-dir" not in text
     assert "deadline_epoch=$(($(date +%s) + 18000))" in text
+    assert text.index("deadline_epoch=$(($(date +%s) + 18000))") < text.index("actions/checkout@v4")
+    assert "deadline=\"${{ needs.dependency-smoke.outputs.deadline_epoch }}\"" in text
+    assert "needs: [dependency-smoke, data]" in text
+    assert "needs: [dependency-smoke, data, search]" in text
     for method in (
         "sobol_random_asha_real",
         "optuna_tpe_hyperband",

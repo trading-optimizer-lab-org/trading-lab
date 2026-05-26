@@ -17,7 +17,13 @@ jobs:
   dependency-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      deadline_epoch: ${{ steps.clock.outputs.deadline_epoch }}
     steps:
+      - name: Set 5h workflow deadline
+        id: clock
+        shell: bash
+        run: echo "deadline_epoch=$(($(date +%s) + 18000))" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -32,14 +38,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: dependency-smoke
     timeout-minutes: 30
-    outputs:
-      deadline_epoch: ${{ steps.clock.outputs.deadline_epoch }}
     steps:
       - uses: actions/checkout@v4
-      - name: Set 5h deadline
-        id: clock
+      - name: Show remaining workflow budget
         shell: bash
-        run: echo "deadline_epoch=$(($(date +%s) + 18000))" >> "$GITHUB_OUTPUT"
+        run: |
+          deadline="${{ needs.dependency-smoke.outputs.deadline_epoch }}"
+          now="$(date +%s)"
+          echo "remaining_seconds=$((deadline - now))"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -56,7 +62,7 @@ jobs:
 
   search:
     runs-on: ubuntu-latest
-    needs: data
+    needs: [dependency-smoke, data]
     timeout-minutes: 270
     continue-on-error: true
     strategy:
@@ -81,7 +87,7 @@ jobs:
       - name: Run fair 5h stage
         shell: bash
         run: |
-          deadline="${{ needs.data.outputs.deadline_epoch }}"
+          deadline="${{ needs.dependency-smoke.outputs.deadline_epoch }}"
           now="$(date +%s)"
           reserve_seconds=1800
           remaining_seconds=$((deadline - now - reserve_seconds))
@@ -112,11 +118,17 @@ jobs:
 
   merge:
     runs-on: ubuntu-latest
-    needs: [data, search]
+    needs: [dependency-smoke, data, search]
     if: always()
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Show remaining workflow budget
+        shell: bash
+        run: |
+          deadline="${{ needs.dependency-smoke.outputs.deadline_epoch }}"
+          now="$(date +%s)"
+          echo "remaining_seconds=$((deadline - now))"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
