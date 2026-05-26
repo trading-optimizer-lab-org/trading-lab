@@ -1,0 +1,67 @@
+name: Weekly 7 Methods 12h Merge Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run id with weekly 7-method method-merge artifacts"
+        required: true
+        default: "26417310807"
+  push:
+    branches:
+      - main
+    paths:
+      - .github/weekly-7methods-merge-only-trigger.txt
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CONFIG: configs/weekly_7methods_12h_stateful.yaml
+  SOURCE_RUN_ID: "26417310807"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download source method merges
+        uses: actions/download-artifact@v4
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id || env.SOURCE_RUN_ID }}
+          github-token: ${{ github.token }}
+          path: outputs/weekly_7methods_12h/method_merges
+          pattern: weekly-7methods-12h-method-merge-*
+      - name: Download source public panel
+        uses: actions/download-artifact@v4
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id || env.SOURCE_RUN_ID }}
+          github-token: ${{ github.token }}
+          name: weekly-7methods-public-panel
+          path: data/public
+      - name: Merge recovered wave results
+        run: python scripts/merge_weekly_7methods_12h_leaderboards.py --config "$CONFIG" --input-glob "outputs/weekly_7methods_12h/method_merges/**/weekly_7methods_12h_leaderboard.csv" --output-dir outputs/weekly_7methods_12h --max-output-rows 50000
+      - name: Upload recovered leaderboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7methods-12h-wave1-recovered-leaderboard
+          if-no-files-found: warn
+          path: |
+            outputs/weekly_7methods_12h/weekly_7methods_12h_leaderboard.csv
+            outputs/weekly_7methods_12h/weekly_7methods_12h_verified.csv
+            outputs/weekly_7methods_12h/weekly_7methods_12h_methods.csv
+            outputs/weekly_7methods_12h/weekly_7methods_12h_efficiency.csv
+            outputs/weekly_7methods_12h/weekly_7methods_12h_summary.json
+            outputs/weekly_7methods_12h/weekly_7methods_12h_year_by_year.csv
+            outputs/weekly_7methods_12h/weekly_7methods_12h_weekly_positions.csv

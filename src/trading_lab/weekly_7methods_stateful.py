@@ -128,6 +128,7 @@ def merge_state_files(
     *,
     state_top: int = STATE_TOP_CANDIDATES,
     expected_files_per_method: int = 0,
+    allow_missing_files_per_method: int = 0,
 ) -> dict[str, object]:
     output = Path(output_dir)
     state_output = output / "state"
@@ -150,16 +151,22 @@ def merge_state_files(
             grouped[method].extend(list(data.get("candidates", [])))
 
     if expected_files_per_method > 0:
+        allowed_minimum = max(0, expected_files_per_method - max(0, allow_missing_files_per_method))
         missing = {
             method: count
             for method, count in state_files_by_method.items()
-            if count < expected_files_per_method
+            if count < allowed_minimum
         }
         if missing:
             raise ValueError(
                 "missing weekly 7-method state files: "
                 + ", ".join(f"{method}={count}/{expected_files_per_method}" for method, count in sorted(missing.items()))
             )
+    missing_state_files_by_method = {
+        method: max(0, int(expected_files_per_method) - int(count))
+        for method, count in state_files_by_method.items()
+        if expected_files_per_method > 0 and count < expected_files_per_method
+    }
 
     summary_methods: list[dict[str, object]] = []
     for method, candidates in grouped.items():
@@ -182,6 +189,8 @@ def merge_state_files(
         "state_files": raw_states,
         "state_files_by_method": state_files_by_method,
         "expected_files_per_method": int(expected_files_per_method),
+        "allow_missing_files_per_method": int(max(0, allow_missing_files_per_method)),
+        "missing_state_files_by_method": missing_state_files_by_method,
         "methods": summary_methods,
         "validation_role": "report_only",
         "locked_opened": False,

@@ -280,6 +280,8 @@ def test_weekly_7methods_12h_stateful_workflow_is_manual_balanced_and_locked_clo
     assert "max-parallel: 245" in text
     assert text.count("--time-budget-minutes 240") == 6
     assert text.count("--expected-files-per-method 70") == 3
+    assert text.count("--allow-missing-files-per-method 1") == 3
+    assert "continue-on-error: true" in text
     assert "weekly-7methods-12h-stateful-sp500-down-5pct-leaderboard" in text
     assert "weekly-7methods-public-panel" in text
     for method in (
@@ -297,6 +299,17 @@ def test_weekly_7methods_12h_stateful_workflow_is_manual_balanced_and_locked_clo
     assert "waves: 3" in config
     assert "validation_role: report_only" in config
     assert "locked_opened: false" in config
+
+
+def test_weekly_7methods_12h_merge_only_recovers_method_merges_from_source_run() -> None:
+    text = Path(".github/workflows/weekly-7methods-12h-merge-only.yml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch" in text
+    assert ".github/weekly-7methods-merge-only-trigger.txt" in text
+    assert "source_run_id" in text
+    assert "weekly-7methods-12h-method-merge-*" in text
+    assert "run-id: ${{ inputs.source_run_id || env.SOURCE_RUN_ID }}" in text
+    assert "weekly-7methods-12h-wave1-recovered-leaderboard" in text
 
 
 def test_ci_is_manual_or_pull_request_only() -> None:

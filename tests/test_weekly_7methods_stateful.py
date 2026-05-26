@@ -88,3 +88,42 @@ def test_state_merge_fails_when_method_state_is_missing(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="missing weekly 7-method state files"):
         merge_state_files([path], tmp_path / "merged", expected_files_per_method=1)
+
+
+def test_state_merge_allows_one_missing_runner_per_method(tmp_path: Path) -> None:
+    paths = []
+    for method in STATEFUL_WEEKLY_METHODS:
+        files = 2 if method != "smac_mf_lite" else 1
+        for index in range(files):
+            path = tmp_path / f"{method}_{index}.json"
+            path.write_text(json.dumps({"method": method, "candidates": []}), encoding="utf-8")
+            paths.append(path)
+
+    summary = merge_state_files(
+        paths,
+        tmp_path / "merged",
+        expected_files_per_method=2,
+        allow_missing_files_per_method=1,
+    )
+
+    assert summary["state_files_by_method"]["smac_mf_lite"] == 1
+    assert summary["missing_state_files_by_method"] == {"smac_mf_lite": 1}
+
+
+def test_state_merge_still_fails_when_missing_more_than_allowed(tmp_path: Path) -> None:
+    paths = []
+    for method in STATEFUL_WEEKLY_METHODS:
+        if method == "smac_mf_lite":
+            continue
+        for index in range(2):
+            path = tmp_path / f"{method}_{index}.json"
+            path.write_text(json.dumps({"method": method, "candidates": []}), encoding="utf-8")
+            paths.append(path)
+
+    with pytest.raises(ValueError, match="smac_mf_lite=0/2"):
+        merge_state_files(
+            paths,
+            tmp_path / "merged",
+            expected_files_per_method=2,
+            allow_missing_files_per_method=1,
+        )
