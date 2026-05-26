@@ -1,0 +1,32 @@
+name: Weekly 7 Methods Overnight Stop
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Overnight search run id to cancel"
+        required: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  stop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Cancel requested overnight search run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          status="$(gh api "repos/${REPO}/actions/runs/${SOURCE_RUN_ID}" --jq .status)"
+          if [ "$status" = "completed" ]; then
+            echo "run ${SOURCE_RUN_ID} already completed"
+            exit 0
+          fi
+          gh api -X POST "repos/${REPO}/actions/runs/${SOURCE_RUN_ID}/cancel"
+          sleep 5
+          gh api "repos/${REPO}/actions/runs/${SOURCE_RUN_ID}" --jq '{status, conclusion}'

@@ -13,6 +13,7 @@ from trading_lab.weekly_7methods_stateful import (
     _strict_verified,
     merge_state_files,
 )
+from scripts.merge_weekly_7methods_overnight import _partial_summary
 
 
 def _verified_row(**overrides: object) -> dict[str, object]:
@@ -59,6 +60,26 @@ def test_5h_public_methods_map_to_existing_engines() -> None:
     assert _engine_method("genetic") == "genetic"
     for method in FAIR_5H_WEEKLY_METHODS[:5]:
         assert "lite" not in _engine_method(method)
+
+
+def test_overnight_partial_summary_counts_missing_wave_stage_artifacts(tmp_path: Path) -> None:
+    paths = []
+    for name in (
+        "weekly_7methods_overnight_leaderboard_stage_beam_1_0.csv",
+        "weekly_7methods_overnight_leaderboard_stage_beam_1_1.csv",
+        "weekly_7methods_overnight_leaderboard_stage_genetic_2_0.csv",
+    ):
+        path = tmp_path / name
+        path.write_text("candidate_id,method\nx,beam\n", encoding="utf-8")
+        paths.append(str(path))
+
+    summary = _partial_summary(paths, methods=["beam", "genetic"], expected_waves=2, expected_stages=2)
+
+    assert summary["artifacts_downloaded"] == 3
+    assert summary["expected_artifacts"] == 8
+    assert summary["waves_found"] == [1, 2]
+    assert summary["stage_files_by_method"] == {"beam": 2, "genetic": 1}
+    assert summary["unique_wave_stage_by_method"] == {"beam": 2, "genetic": 1}
 
 
 def test_state_merge_keeps_train_only_state_and_counts_methods(tmp_path: Path) -> None:

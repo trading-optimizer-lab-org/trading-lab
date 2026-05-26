@@ -1,0 +1,147 @@
+name: Weekly 7 Methods Overnight Search
+
+on:
+  workflow_dispatch:
+    inputs:
+      waves:
+        description: "Sequential waves to run"
+        required: true
+        default: "10"
+      minutes_per_method_stage:
+        description: "Minutes for each method-stage job"
+        required: true
+        default: "55"
+      stages_per_method:
+        description: "Fixed at 35; fails clearly if changed"
+        required: true
+        default: "35"
+      max_parallel:
+        description: "Max parallel jobs inside each wave"
+        required: true
+        default: "245"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate fixed overnight shape
+        run: |
+          test "${{ inputs.stages_per_method }}" = "35"
+          test "${{ inputs.waves }}" -ge 1
+          test "${{ inputs.waves }}" -le 10
+          test "${{ inputs.max_parallel }}" -ge 1
+          test "${{ inputs.max_parallel }}" -le 245
+          test "${{ inputs.minutes_per_method_stage }}" -ge 1
+          test "${{ inputs.minutes_per_method_stage }}" -le 60
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev,hpo]"
+      - name: Download public multi-asset panel
+        run: python scripts/download_public_data.py --feature-panel --output data/public/spy_daily.csv
+      - name: Upload public multi-asset panel
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7methods-overnight-public-panel
+          path: data/public/spy_daily.csv
+
+  wave-1:
+    needs: data
+    if: ${{ fromJSON(inputs.waves) >= 1 }}
+    uses: ./.github/workflows/weekly-7methods-overnight-wave.yml
+    with:
+      wave: 1
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}
+
+  wave-2:
+    needs: wave-1
+    if: ${{ fromJSON(inputs.waves) >= 2 }}
+    uses: ./.github/workflows/weekly-7methods-overnight-wave.yml
+    with:
+      wave: 2
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}
+
+  wave-3:
+    needs: wave-2
+    if: ${{ fromJSON(inputs.waves) >= 3 }}
+    uses: ./.github/workflows/weekly-7methods-overnight-wave.yml
+    with:
+      wave: 3
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}
+
+  wave-4:
+    needs: wave-3
+    if: ${{ fromJSON(inputs.waves) >= 4 }}
+    uses: ./.github/workflows/weekly-7methods-overnight-wave.yml
+    with:
+      wave: 4
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}
+
+  wave-5:
+    needs: wave-4
+    if: ${{ fromJSON(inputs.waves) >= 5 }}
+    uses: ./.github/workflows/weekly-7methods-overnight-wave.yml
+    with:
+      wave: 5
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}
+
+  wave-6:
+    needs: wave-5
+    if: ${{ fromJSON(inputs.waves) >= 6 }}
+    uses: ./.github/workflows/weekly-7methods-overnight-wave.yml
+    with:
+      wave: 6
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}
+
+  wave-7:
+    needs: wave-6
+    if: ${{ fromJSON(inputs.waves) >= 7 }}
+    uses: ./.github/workflows/weekly-7methods-overnight-wave.yml
+    with:
+      wave: 7
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}
+
+  wave-8:
+    needs: wave-7
+    if: ${{ fromJSON(inputs.waves) >= 8 }}
+    uses: ./.github/workflows/weekly-7methods-overnight-wave.yml
+    with:
+      wave: 8
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}
+
+  wave-9:
+    needs: wave-8
+    if: ${{ fromJSON(inputs.waves) >= 9 }}
+    uses: ./.github/workflows/weekly-7methods-overnight-wave.yml
+    with:
+      wave: 9
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}
+
+  wave-10:
+    needs: wave-9
+    if: ${{ fromJSON(inputs.waves) >= 10 }}
+    uses: ./.github/workflows/weekly-7methods-overnight-wave.yml
+    with:
+      wave: 10
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}

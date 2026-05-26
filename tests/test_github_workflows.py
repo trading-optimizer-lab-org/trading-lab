@@ -381,6 +381,62 @@ def test_github_actions_unblock_smoke_is_manual_single_checkout_job() -> None:
     assert "pip install" not in text
 
 
+def test_weekly_7methods_overnight_search_is_manual_chunked_and_merge_free() -> None:
+    text = Path(".github/workflows/weekly-7methods-overnight-search.yml").read_text(encoding="utf-8")
+    wave = Path(".github/workflows/weekly-7methods-overnight-wave.yml").read_text(encoding="utf-8")
+    config = Path("configs/weekly_7methods_overnight.yaml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch" in text
+    assert "push:" not in text
+    assert "waves:" in text
+    assert "minutes_per_method_stage:" in text
+    assert "max_parallel:" in text
+    assert "weekly-7methods-overnight-public-panel" in text
+    assert "wave-10:" in text
+    assert "uses: ./.github/workflows/weekly-7methods-overnight-wave.yml" in text
+    assert "Merge all methods" not in text
+    assert "weekly-7methods-overnight-merged-leaderboard" not in text
+
+    assert "workflow_call" in wave
+    assert "method: [sobol_random_asha_real, optuna_tpe_hyperband, dehb_real, bohb_real, smac_mf_real, beam, genetic]" in wave
+    assert "stage: [0, 1, 2" in wave
+    assert "max-parallel: ${{ inputs.max_parallel }}" in wave
+    assert "--method \"${{ matrix.method }}\"" in wave
+    assert "--stage \"${{ matrix.stage }}\"" in wave
+    assert "--time-budget-minutes \"${{ inputs.minutes_per_method_stage }}\"" in wave
+    assert "weekly-7m-overnight-wave-${{ inputs.wave }}-${{ matrix.method }}-stage-${{ matrix.stage }}" in wave
+
+    assert "waves: 10" in config
+    assert "minutes_per_method_stage: 55" in config
+    assert "stages_per_method: 35" in config
+    assert "jobs_per_wave: 245" in config
+    assert "locked_opened: false" in config
+    assert "validation_role: report_only" in config
+
+
+def test_weekly_7methods_overnight_merge_now_is_source_run_partial_merge() -> None:
+    text = Path(".github/workflows/weekly-7methods-overnight-merge-now.yml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch" in text
+    assert "source_run_id" in text
+    assert "run-id: ${{ inputs.source_run_id }}" in text
+    assert "continue-on-error: true" in text
+    assert "weekly-7m-overnight-wave-*" in text
+    assert "scripts/merge_weekly_7methods_overnight.py" in text
+    assert "weekly-7methods-overnight-merged-leaderboard" in text
+    assert "weekly_7methods_overnight_summary.json" in text
+
+
+def test_weekly_7methods_overnight_stop_can_cancel_with_actions_write() -> None:
+    text = Path(".github/workflows/weekly-7methods-overnight-stop.yml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch" in text
+    assert "source_run_id" in text
+    assert "actions: write" in text
+    assert "/actions/runs/${SOURCE_RUN_ID}/cancel" in text
+    assert "gh api -X POST" in text
+
+
 def test_ci_is_manual_or_pull_request_only() -> None:
     text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 
