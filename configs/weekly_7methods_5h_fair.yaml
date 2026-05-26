@@ -18,8 +18,8 @@ generations: 24
 mutations_per_parent: 36
 top_rows_per_stage: 500
 random_seed: 527000
-time_budget_minutes: 34
-workflow_deadline_minutes: 300
+time_budget_minutes: 50
+workflow_deadline_minutes: 420
 merge_reserved_minutes: 30
 waves: 1
 jobs_per_method: 35

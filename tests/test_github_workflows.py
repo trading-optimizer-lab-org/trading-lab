@@ -324,6 +324,7 @@ def test_weekly_7methods_5h_fair_workflow_runs_one_balanced_wave_from_zero() -> 
     assert "dependency-smoke:" in text
     assert "scripts/smoke_weekly_real_hpo_dependencies.py" in text
     assert 'python -m pip install -e ".[dev,hpo]"' in text
+    assert "timeout-minutes: 420" in text
     assert "max-parallel: 35" in text
     assert "stage: [0, 1, 2" in text
     assert "method: [sobol_random_asha_real" not in text
@@ -337,8 +338,8 @@ def test_weekly_7methods_5h_fair_workflow_runs_one_balanced_wave_from_zero() -> 
     assert "weekly-7methods-5h-fair-leaderboard" in text
     assert "weekly_7methods_5h_fair_leaderboard.csv" in text
     assert "state-dir" not in text
-    assert "deadline_epoch=$(($(date +%s) + 18000))" in text
-    assert text.index("deadline_epoch=$(($(date +%s) + 18000))") < text.index("actions/checkout@v4")
+    assert "deadline_epoch=$(($(date +%s) + 25200))" in text
+    assert text.index("deadline_epoch=$(($(date +%s) + 25200))") < text.index("actions/checkout@v4")
     assert "deadline=\"${{ needs.dependency-smoke.outputs.deadline_epoch }}\"" in text
     assert "needs: [dependency-smoke, data]" in text
     assert "needs: [dependency-smoke, data, search]" in text
@@ -357,6 +358,8 @@ def test_weekly_7methods_5h_fair_workflow_runs_one_balanced_wave_from_zero() -> 
     assert "github_search_jobs: 35" in config
     assert "total_method_runs: 245" in config
     assert "total_search_jobs: 35" in config
+    assert "time_budget_minutes: 50" in config
+    assert "workflow_deadline_minutes: 420" in config
     assert "waves: 1" in config
     assert "stateful: false" in config
     assert "partial: false" in config

@@ -28,7 +28,7 @@ jobs:
       - name: Set 5h workflow deadline
         id: clock
         shell: bash
-        run: echo "deadline_epoch=$(($(date +%s) + 18000))" >> "$GITHUB_OUTPUT"
+        run: echo "deadline_epoch=$(($(date +%s) + 25200))" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -68,7 +68,7 @@ jobs:
   search:
     runs-on: ubuntu-latest
     needs: [dependency-smoke, data]
-    timeout-minutes: 270
+    timeout-minutes: 420
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -99,8 +99,8 @@ jobs:
             budget_minutes=1
           else
             budget_minutes=$((remaining_seconds / 7 / 60))
-            if [ "$budget_minutes" -gt 34 ]; then
-              budget_minutes=34
+            if [ "$budget_minutes" -gt 50 ]; then
+              budget_minutes=50
             fi
           fi
           methods=(sobol_random_asha_real optuna_tpe_hyperband dehb_real bohb_real smac_mf_real beam genetic)
