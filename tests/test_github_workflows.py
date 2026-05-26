@@ -322,8 +322,12 @@ def test_weekly_7methods_5h_fair_workflow_runs_one_balanced_wave_from_zero() -> 
     assert "dependency-smoke:" in text
     assert "scripts/smoke_weekly_real_hpo_dependencies.py" in text
     assert 'python -m pip install -e ".[dev,hpo]"' in text
-    assert "max-parallel: 245" in text
-    assert text.index("stage: [0, 1, 2") < text.index("method: [sobol_random_asha_real")
+    assert "max-parallel: 35" in text
+    assert "stage: [0, 1, 2" in text
+    assert "method: [sobol_random_asha_real" not in text
+    assert "methods=(sobol_random_asha_real optuna_tpe_hyperband dehb_real bohb_real smac_mf_real beam genetic)" in text
+    assert 'for method in "${methods[@]}"; do' in text
+    assert "budget_minutes=$((remaining_seconds / 7 / 60))" in text
     assert "--total-stages 35" in text
     assert "--time-budget-minutes \"$budget_minutes\"" in text
     assert "--file-prefix \"$FILE_PREFIX\"" in text
@@ -347,7 +351,9 @@ def test_weekly_7methods_5h_fair_workflow_runs_one_balanced_wave_from_zero() -> 
         assert method in text
         assert f"  - {method}" in config
     assert "jobs_per_method: 35" in config
-    assert "total_search_jobs: 245" in config
+    assert "github_search_jobs: 35" in config
+    assert "total_method_runs: 245" in config
+    assert "total_search_jobs: 35" in config
     assert "waves: 1" in config
     assert "stateful: false" in config
     assert "partial: false" in config

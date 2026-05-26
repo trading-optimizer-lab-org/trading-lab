@@ -18,12 +18,14 @@ generations: 24
 mutations_per_parent: 36
 top_rows_per_stage: 500
 random_seed: 527000
-time_budget_minutes: 240
+time_budget_minutes: 34
 workflow_deadline_minutes: 300
 merge_reserved_minutes: 30
 waves: 1
 jobs_per_method: 35
-total_search_jobs: 245
+github_search_jobs: 35
+total_method_runs: 245
+total_search_jobs: 35
 score_mode: train_only_weekly_sp500_down_5pct
 validation_role: report_only
 locked_opened: false
