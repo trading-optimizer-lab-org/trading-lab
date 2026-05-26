@@ -317,7 +317,8 @@ def test_weekly_7methods_5h_fair_workflow_runs_one_balanced_wave_from_zero() -> 
     config = Path("configs/weekly_7methods_5h_fair.yaml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch" in text
-    assert "push:" not in text
+    assert "push:" in text
+    assert ".github/weekly-7methods-5h-trigger.txt" in text
     assert "max-parallel: 245" in text
     assert "--total-stages 35" in text
     assert "--time-budget-minutes \"$budget_minutes\"" in text
