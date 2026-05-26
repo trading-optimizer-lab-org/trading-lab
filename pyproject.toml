@@ -15,6 +15,13 @@ dependencies = [
 dev = [
     "pytest>=8.2",
 ]
+hpo = [
+    "optuna>=4.3,<5",
+    "ConfigSpace>=1.2,<2",
+    "smac>=2.2,<3",
+    "dehb>=0.1,<1",
+    "hpbandster>=0.7,<1",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

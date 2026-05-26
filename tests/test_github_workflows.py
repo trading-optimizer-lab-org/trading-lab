@@ -319,6 +319,9 @@ def test_weekly_7methods_5h_fair_workflow_runs_one_balanced_wave_from_zero() -> 
     assert "workflow_dispatch" in text
     assert "push:" in text
     assert ".github/weekly-7methods-5h-trigger.txt" in text
+    assert "dependency-smoke:" in text
+    assert "scripts/smoke_weekly_real_hpo_dependencies.py" in text
+    assert 'python -m pip install -e ".[dev,hpo]"' in text
     assert "max-parallel: 245" in text
     assert "--total-stages 35" in text
     assert "--time-budget-minutes \"$budget_minutes\"" in text

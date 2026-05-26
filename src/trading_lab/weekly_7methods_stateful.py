@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import time
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
@@ -57,11 +58,11 @@ FAIR_5H_WEEKLY_METHODS = (
 ALL_STATEFUL_WEEKLY_METHODS = tuple(dict.fromkeys((*STATEFUL_WEEKLY_METHODS, *FAIR_5H_WEEKLY_METHODS)))
 
 METHOD_ENGINE_ALIASES = {
-    "sobol_random_asha_real": "sobol_random_asha",
-    "optuna_tpe_hyperband": "tpe_asha_lite",
-    "dehb_real": "dehb_lite",
-    "bohb_real": "bohb_lite",
-    "smac_mf_real": "smac_mf_lite",
+    "sobol_random_asha_real": "real_hpo",
+    "optuna_tpe_hyperband": "real_hpo",
+    "dehb_real": "real_hpo",
+    "bohb_real": "real_hpo",
+    "smac_mf_real": "real_hpo",
 }
 
 EXPECTED_TRAIN_YEARS = 14
@@ -90,6 +91,16 @@ def run_stateful_weekly_search(
         return [], _empty_state(method, wave, stage)
 
     engine_method = _engine_method(method)
+    if engine_method == "real_hpo":
+        return run_real_hpo_weekly_search(
+            examples,
+            config,
+            method=method,
+            wave=wave,
+            stage=stage,
+            time_budget_minutes=time_budget_minutes,
+        )
+
     seed = int(config.random_seed + wave * 1_000_000 + stage * 10_000 + _stateful_method_offset(method))
     rng = np.random.default_rng(seed)
     prior_state = load_method_state(state_dir, method)
@@ -113,6 +124,55 @@ def run_stateful_weekly_search(
         iteration += 1
         if time_budget_minutes <= 0:
             break
+
+    rows = _trim_stage_rows(rows, config.top_rows_per_stage)
+    state = build_method_state(rows, method=method, wave=wave, stage=stage)
+    return rows, state
+
+
+def run_real_hpo_weekly_search(
+    examples: pd.DataFrame,
+    config: MonthlyRiskSearchConfig,
+    *,
+    method: str,
+    wave: int,
+    stage: int,
+    time_budget_minutes: float,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    catalog = _build_weekly_spec_catalog(examples)
+    assets = _available_assets_from_examples(examples)
+    if not catalog or not assets:
+        return [], _empty_state(method, wave, stage)
+    stage_catalog = [spec for index, spec in enumerate(catalog) if index % config.total_stages == config.stage] or catalog
+    universes = _asset_universes(assets)
+    rng = np.random.default_rng(config.random_seed + wave * 1_000_000 + stage * 10_000 + _stateful_method_offset(method))
+    seen: set[tuple[tuple[str, ...], tuple[str, ...], str, float, float, float]] = set()
+    rows: list[dict[str, object]] = []
+    start = time.monotonic()
+    deadline = start + max(1.0, float(time_budget_minutes) * 60.0)
+
+    def evaluate(candidate: WeeklyMultiAssetCandidate, *, backend: str) -> float:
+        stamped = _evaluate_and_stamp(examples, [candidate], seen, method=method, wave=wave, stage=stage, start=start)
+        for row in stamped:
+            row["hpo_backend"] = backend
+            row["method_real"] = True
+        rows.extend(stamped)
+        if not stamped:
+            return -1_000_000.0
+        return float(stamped[-1].get("weekly_multi_asset_score", -1_000_000.0) or -1_000_000.0)
+
+    if method == "sobol_random_asha_real":
+        _run_optuna_real(stage_catalog, universes, config=config, deadline=deadline, rng=rng, evaluate=evaluate, sampler_name="qmc", pruner_name="asha")
+    elif method == "optuna_tpe_hyperband":
+        _run_optuna_real(stage_catalog, universes, config=config, deadline=deadline, rng=rng, evaluate=evaluate, sampler_name="tpe", pruner_name="hyperband")
+    elif method == "dehb_real":
+        _run_dehb_real(stage_catalog, universes, config=config, deadline=deadline, evaluate=evaluate)
+    elif method == "bohb_real":
+        _run_bohb_real(stage_catalog, universes, config=config, deadline=deadline, evaluate=evaluate, run_id=f"bohb-{wave}-{stage}-{int(start)}")
+    elif method == "smac_mf_real":
+        _run_smac_real(stage_catalog, universes, config=config, deadline=deadline, evaluate=evaluate, seed=int(rng.integers(1, 2_000_000_000)))
+    else:
+        raise ValueError(f"unknown real HPO method: {method}")
 
     rows = _trim_stage_rows(rows, config.top_rows_per_stage)
     state = build_method_state(rows, method=method, wave=wave, stage=stage)
@@ -453,6 +513,207 @@ def _sobol_like_candidate(
 ) -> WeeklyMultiAssetCandidate:
     rng = np.random.default_rng(10_000_019 + stage * 1_000_003 + index * 9_176)
     return _random_candidate(catalog, assets, config=config, rng=rng)
+
+
+def _run_optuna_real(
+    catalog: list[str],
+    universes: list[tuple[str, ...]],
+    *,
+    config: MonthlyRiskSearchConfig,
+    deadline: float,
+    rng: np.random.Generator,
+    evaluate: Any,
+    sampler_name: str,
+    pruner_name: str,
+) -> None:
+    import optuna
+
+    seed = int(rng.integers(1, 2_000_000_000))
+    if sampler_name == "qmc":
+        sampler = optuna.samplers.QMCSampler(qmc_type="sobol", seed=seed)
+    else:
+        sampler = optuna.samplers.TPESampler(seed=seed, multivariate=True, constant_liar=True)
+    if pruner_name == "hyperband":
+        pruner = optuna.pruners.HyperbandPruner(min_resource=1, max_resource=3, reduction_factor=3)
+    else:
+        pruner = optuna.pruners.SuccessiveHalvingPruner(min_resource=1, reduction_factor=3)
+    study = optuna.create_study(direction="maximize", sampler=sampler, pruner=pruner)
+
+    def objective(trial: Any) -> float:
+        candidate = _candidate_from_hpo_config(_trial_to_hpo_config(trial, catalog, universes, config), catalog, universes, config)
+        score = evaluate(candidate, backend=f"optuna_{sampler_name}_{pruner_name}")
+        trial.report(score, step=1)
+        if trial.should_prune():
+            raise optuna.TrialPruned()
+        trial.report(score, step=3)
+        return score
+
+    timeout = max(1.0, deadline - time.monotonic())
+    study.optimize(objective, timeout=timeout, n_trials=max(1, int(config.seed_pool)), catch=(Exception,))
+
+
+def _run_dehb_real(
+    catalog: list[str],
+    universes: list[tuple[str, ...]],
+    *,
+    config: MonthlyRiskSearchConfig,
+    deadline: float,
+    evaluate: Any,
+) -> None:
+    from dehb import DEHB
+
+    cs = _hpo_configspace(catalog, universes, config)
+
+    def objective(hpo_config: Any, fidelity: float = 1.0, **_: object) -> dict[str, float]:
+        candidate = _candidate_from_hpo_config(hpo_config, catalog, universes, config)
+        score = evaluate(candidate, backend="dehb")
+        return {"fitness": -score, "cost": float(max(fidelity, 1.0))}
+
+    with tempfile.TemporaryDirectory(prefix="weekly_dehb_") as tmp:
+        optimizer = DEHB(
+            f=objective,
+            cs=cs,
+            dimensions=len(cs.get_hyperparameters()),
+            min_fidelity=1,
+            max_fidelity=3,
+            eta=3,
+            n_workers=1,
+            output_path=tmp,
+        )
+        optimizer.run(total_cost=max(1.0, deadline - time.monotonic()))
+
+
+def _run_bohb_real(
+    catalog: list[str],
+    universes: list[tuple[str, ...]],
+    *,
+    config: MonthlyRiskSearchConfig,
+    deadline: float,
+    evaluate: Any,
+    run_id: str,
+) -> None:
+    import hpbandster.core.nameserver as hpns
+    from hpbandster.core.worker import Worker
+    from hpbandster.optimizers import BOHB
+
+    cs = _hpo_configspace(catalog, universes, config)
+
+    class WeeklyBOHBWorker(Worker):
+        def compute(self, config: dict[str, object], budget: float, **_: object) -> dict[str, object]:
+            candidate = _candidate_from_hpo_config(config, catalog, universes, config_outer)
+            score = evaluate(candidate, backend="hpbandster_bohb")
+            return {"loss": float(-score), "info": {"score": float(score), "budget": float(budget)}}
+
+    config_outer = config
+    nameserver = hpns.NameServer(run_id=run_id, host="127.0.0.1", port=0)
+    ns_host, ns_port = nameserver.start()
+    worker = WeeklyBOHBWorker(nameserver=ns_host, nameserver_port=ns_port, run_id=run_id)
+    worker.run(background=True)
+    optimizer = BOHB(configspace=cs, run_id=run_id, nameserver=ns_host, nameserver_port=ns_port, min_budget=1, max_budget=3)
+    try:
+        iterations = max(1, min(32, int(config.seed_pool // 32) or 1))
+        optimizer.run(n_iterations=iterations, min_n_workers=1)
+    finally:
+        optimizer.shutdown(shutdown_workers=True)
+        nameserver.shutdown()
+
+
+def _run_smac_real(
+    catalog: list[str],
+    universes: list[tuple[str, ...]],
+    *,
+    config: MonthlyRiskSearchConfig,
+    deadline: float,
+    evaluate: Any,
+    seed: int,
+) -> None:
+    from smac import MultiFidelityFacade, Scenario
+
+    cs = _hpo_configspace(catalog, universes, config)
+
+    def objective(hpo_config: Any, seed: int = 0, budget: float = 1.0) -> float:
+        del seed, budget
+        candidate = _candidate_from_hpo_config(hpo_config, catalog, universes, config)
+        score = evaluate(candidate, backend="smac_multi_fidelity")
+        return float(-score)
+
+    with tempfile.TemporaryDirectory(prefix="weekly_smac_") as tmp:
+        scenario = Scenario(
+            configspace=cs,
+            output_directory=Path(tmp),
+            deterministic=True,
+            n_trials=max(1, int(config.seed_pool)),
+            walltime_limit=max(1, int(deadline - time.monotonic())),
+            min_budget=1,
+            max_budget=3,
+            seed=seed,
+        )
+        smac = MultiFidelityFacade(scenario=scenario, target_function=objective, overwrite=True)
+        smac.optimize()
+
+
+def _trial_to_hpo_config(
+    trial: Any,
+    catalog: list[str],
+    universes: list[tuple[str, ...]],
+    config: MonthlyRiskSearchConfig,
+) -> dict[str, object]:
+    data: dict[str, object] = {
+        "feature_count": trial.suggest_int("feature_count", 1, max(1, min(config.max_features, len(catalog)))),
+        "asset_universe": trial.suggest_int("asset_universe", 0, max(0, len(universes) - 1)),
+        "selector": trial.suggest_categorical("selector", list(WEEKLY_ASSET_SELECTORS)),
+        "intercept": trial.suggest_float("intercept", -0.55, 0.55),
+        "scale": trial.suggest_float("scale", 0.15, 1.45),
+        "smoothing": trial.suggest_categorical("smoothing", [0.0, 0.10, 0.20, 0.35, 0.50]),
+    }
+    max_index = max(0, len(catalog) - 1)
+    for index in range(max(1, config.max_features)):
+        data[f"spec_{index}"] = trial.suggest_int(f"spec_{index}", 0, max_index)
+    return data
+
+
+def _hpo_configspace(
+    catalog: list[str],
+    universes: list[tuple[str, ...]],
+    config: MonthlyRiskSearchConfig,
+) -> Any:
+    from ConfigSpace import CategoricalHyperparameter, ConfigurationSpace, UniformFloatHyperparameter, UniformIntegerHyperparameter
+
+    cs = ConfigurationSpace()
+    cs.add_hyperparameter(UniformIntegerHyperparameter("feature_count", lower=1, upper=max(1, min(config.max_features, len(catalog)))))
+    cs.add_hyperparameter(UniformIntegerHyperparameter("asset_universe", lower=0, upper=max(0, len(universes) - 1)))
+    cs.add_hyperparameter(CategoricalHyperparameter("selector", choices=list(WEEKLY_ASSET_SELECTORS)))
+    cs.add_hyperparameter(UniformFloatHyperparameter("intercept", lower=-0.55, upper=0.55))
+    cs.add_hyperparameter(UniformFloatHyperparameter("scale", lower=0.15, upper=1.45))
+    cs.add_hyperparameter(CategoricalHyperparameter("smoothing", choices=[0.0, 0.10, 0.20, 0.35, 0.50]))
+    max_index = max(0, len(catalog) - 1)
+    for index in range(max(1, config.max_features)):
+        cs.add_hyperparameter(UniformIntegerHyperparameter(f"spec_{index}", lower=0, upper=max_index))
+    return cs
+
+
+def _candidate_from_hpo_config(
+    hpo_config: Any,
+    catalog: list[str],
+    universes: list[tuple[str, ...]],
+    config: MonthlyRiskSearchConfig,
+) -> WeeklyMultiAssetCandidate:
+    values = dict(hpo_config)
+    feature_count = int(values.get("feature_count", 1) or 1)
+    specs = []
+    for index in range(max(1, min(config.max_features, feature_count))):
+        spec_index = int(float(values.get(f"spec_{index}", 0) or 0)) % len(catalog)
+        specs.append(catalog[spec_index])
+    universe_index = int(float(values.get("asset_universe", 0) or 0)) % len(universes)
+    smoothing = float(values.get("smoothing", 0.0) or 0.0)
+    return WeeklyMultiAssetCandidate(
+        tuple(sorted(set(specs))) or (catalog[0],),
+        tuple(sorted(set(universes[universe_index]))),
+        selector=str(values.get("selector", "momentum_26w") or "momentum_26w"),
+        intercept=float(values.get("intercept", 0.0) or 0.0),
+        scale=float(values.get("scale", 1.0) or 1.0),
+        smoothing=smoothing,
+    )
 
 
 def _evaluate_and_stamp(

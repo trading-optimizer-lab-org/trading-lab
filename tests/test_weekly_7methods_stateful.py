@@ -50,13 +50,15 @@ def test_strict_verified_requires_exact_train_validation_counts() -> None:
 
 def test_5h_public_methods_map_to_existing_engines() -> None:
     assert len(FAIR_5H_WEEKLY_METHODS) == 7
-    assert _engine_method("sobol_random_asha_real") == "sobol_random_asha"
-    assert _engine_method("optuna_tpe_hyperband") == "tpe_asha_lite"
-    assert _engine_method("dehb_real") == "dehb_lite"
-    assert _engine_method("bohb_real") == "bohb_lite"
-    assert _engine_method("smac_mf_real") == "smac_mf_lite"
+    assert _engine_method("sobol_random_asha_real") == "real_hpo"
+    assert _engine_method("optuna_tpe_hyperband") == "real_hpo"
+    assert _engine_method("dehb_real") == "real_hpo"
+    assert _engine_method("bohb_real") == "real_hpo"
+    assert _engine_method("smac_mf_real") == "real_hpo"
     assert _engine_method("beam") == "beam"
     assert _engine_method("genetic") == "genetic"
+    for method in FAIR_5H_WEEKLY_METHODS[:5]:
+        assert "lite" not in _engine_method(method)
 
 
 def test_state_merge_keeps_train_only_state_and_counts_methods(tmp_path: Path) -> None:
