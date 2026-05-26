@@ -2,6 +2,11 @@ name: Weekly Multi Asset SP500 Down 5pct 7 Methods 5h Fair Real HPO
 
 on:
   workflow_dispatch:
+    inputs:
+      wave:
+        description: Independent search wave / seed bucket
+        required: true
+        default: "1"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -100,11 +105,11 @@ jobs:
           fi
           methods=(sobol_random_asha_real optuna_tpe_hyperband dehb_real bohb_real smac_mf_real beam genetic)
           for method in "${methods[@]}"; do
-            echo "Using ${budget_minutes} minutes for method=${method} stage=${{ matrix.stage }}"
+            echo "Using ${budget_minutes} minutes for method=${method} wave=${{ inputs.wave }} stage=${{ matrix.stage }}"
             python scripts/run_weekly_7methods_12h_stateful_search.py \
               --config "$CONFIG" \
               --method "$method" \
-              --wave 1 \
+              --wave "${{ inputs.wave }}" \
               --stage "${{ matrix.stage }}" \
               --total-stages 35 \
               --time-budget-minutes "$budget_minutes" \

@@ -317,6 +317,8 @@ def test_weekly_7methods_5h_fair_workflow_runs_one_balanced_wave_from_zero() -> 
     config = Path("configs/weekly_7methods_5h_fair.yaml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch" in text
+    assert "wave:" in text
+    assert "Independent search wave / seed bucket" in text
     assert "push:" not in text
     assert ".github/weekly-7methods-5h-trigger.txt" not in text
     assert "dependency-smoke:" in text
@@ -329,6 +331,7 @@ def test_weekly_7methods_5h_fair_workflow_runs_one_balanced_wave_from_zero() -> 
     assert 'for method in "${methods[@]}"; do' in text
     assert "budget_minutes=$((remaining_seconds / 7 / 60))" in text
     assert "--total-stages 35" in text
+    assert '--wave "${{ inputs.wave }}"' in text
     assert "--time-budget-minutes \"$budget_minutes\"" in text
     assert "--file-prefix \"$FILE_PREFIX\"" in text
     assert "weekly-7methods-5h-fair-leaderboard" in text
