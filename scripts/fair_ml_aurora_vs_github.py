@@ -47,7 +47,7 @@ def main() -> int:
     run.add_argument("--trading-lab-dir", default=str(ROOT))
     run.add_argument("--config", default="configs/weekly_sharpe_3methods_max_parallel_900.yaml")
     run.add_argument("--seed", type=int, default=20260527)
-    run.add_argument("--aurora-models", default="lightgbm,xgboost,logistic,forest,ridge,corr")
+    run.add_argument("--aurora-models", default="logistic,forest,ridge,corr")
 
     merge = sub.add_parser("merge")
     merge.add_argument("--input-root", required=True)
