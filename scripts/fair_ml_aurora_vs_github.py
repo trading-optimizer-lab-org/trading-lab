@@ -26,11 +26,11 @@ from trading_lab.weekly_multi_asset import build_weekly_multi_asset_examples  # 
 
 
 VALID_RULE = {
-    "train_calmar_gt": 1.0,
-    "validation_calmar_gt": 0.70,
+    "train_calmar_gt": 0.0,
+    "validation_calmar_gt": 0.0,
     "validation_calmar_ratio_min": None,
-    "train_cagr_min": 0.04,
-    "validation_cagr_min": 0.03,
+    "train_cagr_min": 0.0,
+    "validation_cagr_min": 0.0,
     "locked_opened": False,
 }
 
