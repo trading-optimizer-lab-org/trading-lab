@@ -1,0 +1,39 @@
+name: Print Fair ML Results
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/print-fair-ml-results-trigger.txt"
+      - ".github/workflows/print-fair-ml-results.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  print:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download final artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: fair-ml-aurora-vs-github-30m-results
+          run-id: 26524768799
+          path: fair-ml-results
+          github-token: ${{ github.token }}
+
+      - name: Print summary
+        run: |
+          echo "=== fair_ml_summary.json ==="
+          cat fair-ml-results/fair_ml_summary.json
+          echo ""
+          echo "=== fair_ml_summary_table.csv ==="
+          cat fair-ml-results/fair_ml_summary_table.csv
+          echo ""
+          echo "=== fair_ml_results.csv ==="
+          cat fair-ml-results/fair_ml_results.csv
+
