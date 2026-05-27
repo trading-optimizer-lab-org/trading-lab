@@ -7,6 +7,12 @@ on:
         description: Effective seconds per engine inside each paired job
         required: false
         default: "480"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/fair-ml-aurora-vs-github-30m-trigger.txt"
+      - ".github/workflows/fair-ml-aurora-vs-github-30m.yml"
 
 permissions:
   contents: read
@@ -53,7 +59,7 @@ jobs:
           python trading-lab/scripts/fair_ml_aurora_vs_github.py run-pair \
             --track "${{ matrix.track }}" \
             --order "${{ matrix.order }}" \
-            --seconds-per-engine "${{ inputs.seconds_per_engine }}" \
+            --seconds-per-engine "${{ inputs.seconds_per_engine || '480' }}" \
             --trading-lab-dir "$GITHUB_WORKSPACE/trading-lab" \
             --quantforge-dir "$GITHUB_WORKSPACE/quantforge" \
             --output-dir "$GITHUB_WORKSPACE/results/${{ matrix.track }}-${{ matrix.order }}"

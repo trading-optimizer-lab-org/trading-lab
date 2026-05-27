@@ -49,7 +49,9 @@ def test_fair_ml_aurora_vs_github_30m_is_manual_paired_and_uploads_final_artifac
 
     assert "name: Fair ML Aurora vs GitHub 30m" in text
     assert "workflow_dispatch" in text
-    assert "push:" not in text
+    assert "push:" in text
+    assert ".github/fair-ml-aurora-vs-github-30m-trigger.txt" in text
+    assert "${{ inputs.seconds_per_engine || '480' }}" in text
     assert "max-parallel: 2" in text
     assert "track: normalized" in text
     assert "order: aurora_first" in text
