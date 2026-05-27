@@ -1,0 +1,77 @@
+name: Weekly 7 Methods Overnight Merge 6 Methods Run
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/weekly-7methods-overnight-merge-6methods-trigger.txt"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CONFIG: configs/weekly_7methods_overnight_6methods_merge.yaml
+  OUTPUT_DIR: outputs/weekly_7methods_overnight
+  FILE_PREFIX: weekly_7methods_overnight
+  SOURCE_RUN_ID: "26471874572"
+  EXPECTED_WAVES: "1"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev,hpo]"
+      - name: Download available overnight stage artifacts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          github-token: ${{ github.token }}
+          path: ${{ env.OUTPUT_DIR }}/stage_artifacts
+          pattern: weekly-7m-overnight-wave-*
+      - name: Download source public panel
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          github-token: ${{ github.token }}
+          name: weekly-7methods-overnight-public-panel
+          path: data/public
+      - name: Fallback public panel if source artifact is not ready
+        run: |
+          if [ ! -f data/public/spy_daily.csv ]; then
+            python scripts/download_public_data.py --feature-panel --output data/public/spy_daily.csv
+          fi
+      - name: Merge six comparable methods
+        run: |
+          python scripts/merge_weekly_7methods_overnight.py \
+            --config "$CONFIG" \
+            --input-glob "$OUTPUT_DIR/stage_artifacts/**/${FILE_PREFIX}_leaderboard_stage_*.csv" \
+            --output-dir "$OUTPUT_DIR" \
+            --file-prefix "$FILE_PREFIX" \
+            --expected-waves "$EXPECTED_WAVES" \
+            --expected-stages-per-method 35 \
+            --max-output-rows 50000
+      - name: Upload six-method merged leaderboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-7methods-overnight-6methods-merged-leaderboard
+          path: |
+            outputs/weekly_7methods_overnight/weekly_7methods_overnight_leaderboard.csv
+            outputs/weekly_7methods_overnight/weekly_7methods_overnight_verified.csv
+            outputs/weekly_7methods_overnight/weekly_7methods_overnight_methods.csv
+            outputs/weekly_7methods_overnight/weekly_7methods_overnight_efficiency.csv
+            outputs/weekly_7methods_overnight/weekly_7methods_overnight_summary.json
+            outputs/weekly_7methods_overnight/weekly_7methods_overnight_year_by_year.csv
+            outputs/weekly_7methods_overnight/weekly_7methods_overnight_weekly_positions.csv
