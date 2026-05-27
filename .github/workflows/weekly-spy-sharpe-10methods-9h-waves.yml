@@ -1,0 +1,140 @@
+name: Weekly SPY Sharpe 10 Methods 9h Waves
+
+on:
+  workflow_dispatch:
+    inputs:
+      waves:
+        description: "Fixed at 5; fails clearly if changed"
+        required: true
+        default: "5"
+      minutes_per_method_stage:
+        description: "Minutes for each method-stage job"
+        required: true
+        default: "85"
+      max_parallel:
+        description: "Max parallel jobs inside each wave"
+        required: true
+        default: "180"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CONFIG: configs/weekly_spy_sharpe_10methods_9h_waves.yaml
+  OUTPUT_DIR: outputs/weekly_spy_sharpe_10methods_9h
+  FILE_PREFIX: weekly_spy_sharpe_10methods_9h
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate fixed pending shape
+        run: |
+          test "${{ inputs.waves }}" = "5"
+          test "${{ inputs.max_parallel }}" -ge 1
+          test "${{ inputs.max_parallel }}" -le 180
+          test "${{ inputs.minutes_per_method_stage }}" -ge 1
+          test "${{ inputs.minutes_per_method_stage }}" -le 85
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev,hpo]"
+      - name: Download public SPY panel
+        run: python scripts/download_public_data.py --output data/public/spy_daily.csv
+      - name: Upload public panel
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-spy-sharpe-10methods-9h-public-panel
+          path: data/public/spy_daily.csv
+
+  wave-1:
+    needs: data
+    uses: ./.github/workflows/weekly-spy-sharpe-10methods-9h-wave.yml
+    with:
+      wave: 1
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}
+      prior_state_artifact: ""
+
+  wave-2:
+    needs: wave-1
+    uses: ./.github/workflows/weekly-spy-sharpe-10methods-9h-wave.yml
+    with:
+      wave: 2
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}
+      prior_state_artifact: weekly-spy-sharpe-10methods-9h-state-wave-1
+
+  wave-3:
+    needs: wave-2
+    uses: ./.github/workflows/weekly-spy-sharpe-10methods-9h-wave.yml
+    with:
+      wave: 3
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}
+      prior_state_artifact: weekly-spy-sharpe-10methods-9h-state-wave-2
+
+  wave-4:
+    needs: wave-3
+    uses: ./.github/workflows/weekly-spy-sharpe-10methods-9h-wave.yml
+    with:
+      wave: 4
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}
+      prior_state_artifact: weekly-spy-sharpe-10methods-9h-state-wave-3
+
+  wave-5:
+    needs: wave-4
+    uses: ./.github/workflows/weekly-spy-sharpe-10methods-9h-wave.yml
+    with:
+      wave: 5
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage) }}
+      max_parallel: ${{ fromJSON(inputs.max_parallel) }}
+      prior_state_artifact: weekly-spy-sharpe-10methods-9h-state-wave-4
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: wave-5
+    if: ${{ always() }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download method-stage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: outputs/weekly_spy_sharpe_10methods_9h/artifacts
+          pattern: weekly-spy-sharpe-10methods-9h-wave-*
+          merge-multiple: true
+      - name: Merge all available artifacts
+        run: |
+          python scripts/merge_weekly_spy_sharpe_10methods_9h.py \
+            --config "$CONFIG" \
+            --input-glob "outputs/weekly_spy_sharpe_10methods_9h/artifacts/**/${FILE_PREFIX}_leaderboard_stage_*.csv" \
+            --output-dir "$OUTPUT_DIR" \
+            --file-prefix "$FILE_PREFIX" \
+            --expected-jobs 900
+      - name: Upload final leaderboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-spy-sharpe-10methods-9h-waves-leaderboard
+          path: |
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_leaderboard.csv
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_verified.csv
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_relaxed_valid.csv
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_methods.csv
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_efficiency.csv
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_parallelism.json
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_state_summary.json
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_summary.json

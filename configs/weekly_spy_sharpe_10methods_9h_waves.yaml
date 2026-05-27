@@ -1,0 +1,51 @@
+data_path: data/public/spy_daily.csv
+output_dir: outputs/weekly_spy_sharpe_10methods_9h
+start_year: 1994
+end_year: 2026
+train_start: "1994-01-01"
+train_end: "2007-12-31"
+validation_start: "2008-01-01"
+validation_end: "2019-12-31"
+locked_start: "2020-01-01"
+cash_return: 0.0
+max_abs_exposure: 1.0
+max_features: 8
+seed_pool: 5000
+beam_width: 160
+generations: 24
+mutations_per_parent: 36
+top_rows_per_stage: 500
+random_seed: 1210900
+waves: 5
+minutes_per_method_stage: 85
+timeout_minutes_per_job: 115
+methods_per_wave: 10
+stages_per_method: 18
+jobs_per_method_per_wave: 18
+jobs_per_wave: 180
+jobs_per_method_total: 90
+jobs_total: 900
+max_parallel: 180
+state_top: 500
+score_mode: train_sharpe_max_validation_80pct_report
+validation_role: report_only
+locked_opened: false
+partial: true
+artifact_name: weekly-spy-sharpe-10methods-9h-waves-leaderboard
+file_prefix: weekly_spy_sharpe_10methods_9h
+aurora_ml_models:
+  - logistic
+  - forest
+  - ridge
+  - corr
+methods:
+  - beam
+  - genetic
+  - sobol_random_asha_real
+  - optuna_tpe_hyperband
+  - dehb_real
+  - bohb_real
+  - smac_mf_real
+  - bandit
+  - aurora_ml
+  - github_ml

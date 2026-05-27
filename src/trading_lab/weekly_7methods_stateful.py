@@ -60,9 +60,20 @@ FAIR_5H_WEEKLY_METHODS = (
 )
 
 SHARPE_3METHOD_WEEKLY_METHODS = ("beam", "genetic", "machine_learning")
+SHARPE_10METHOD_WEEKLY_METHODS = (
+    "beam",
+    "genetic",
+    "sobol_random_asha_real",
+    "optuna_tpe_hyperband",
+    "dehb_real",
+    "bohb_real",
+    "smac_mf_real",
+    "bandit",
+    "machine_learning",
+)
 
 ALL_STATEFUL_WEEKLY_METHODS = tuple(
-    dict.fromkeys((*STATEFUL_WEEKLY_METHODS, *FAIR_5H_WEEKLY_METHODS, *SHARPE_3METHOD_WEEKLY_METHODS))
+    dict.fromkeys((*STATEFUL_WEEKLY_METHODS, *FAIR_5H_WEEKLY_METHODS, *SHARPE_3METHOD_WEEKLY_METHODS, *SHARPE_10METHOD_WEEKLY_METHODS))
 )
 
 METHOD_ENGINE_ALIASES = {
@@ -99,6 +110,8 @@ def run_stateful_weekly_search(
         return [], _empty_state(method, wave, stage)
 
     engine_method = _engine_method(method)
+    prior_state = load_method_state(state_dir, method)
+    prior_candidates = _state_candidates(prior_state)
     if engine_method == "machine_learning":
         return run_weekly_machine_learning_search(
             examples,
@@ -116,12 +129,11 @@ def run_stateful_weekly_search(
             wave=wave,
             stage=stage,
             time_budget_minutes=time_budget_minutes,
+            prior_candidates=prior_candidates,
         )
 
     seed = int(config.random_seed + wave * 1_000_000 + stage * 10_000 + _stateful_method_offset(method))
     rng = np.random.default_rng(seed)
-    prior_state = load_method_state(state_dir, method)
-    prior_candidates = _state_candidates(prior_state)
 
     seen: set[tuple[tuple[str, ...], tuple[str, ...], str, float, float, float]] = set()
     rows: list[dict[str, object]] = []
@@ -249,6 +261,7 @@ def run_real_hpo_weekly_search(
     wave: int,
     stage: int,
     time_budget_minutes: float,
+    prior_candidates: list[WeeklyMultiAssetCandidate] | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
     catalog = _build_weekly_spec_catalog(examples)
     assets = _available_assets_from_examples(examples)
@@ -261,6 +274,19 @@ def run_real_hpo_weekly_search(
     rows: list[dict[str, object]] = []
     start = time.monotonic()
     deadline = start + max(1.0, float(time_budget_minutes) * 60.0)
+    if prior_candidates:
+        rows.extend(
+            _evaluate_and_stamp(
+                examples,
+                prior_candidates,
+                seen,
+                method=method,
+                wave=wave,
+                stage=stage,
+                start=start,
+                score_mode=config.score_mode,
+            )
+        )
 
     def evaluate(candidate: WeeklyMultiAssetCandidate, *, backend: str) -> float:
         stamped = _evaluate_and_stamp(
@@ -549,6 +575,13 @@ def _next_candidates(
         groups = _catalog_groups(catalog)
         rewards = _group_rewards(rows, groups)
         return [_random_candidate(groups.get(_choose_group(rewards, rng), catalog) or catalog, assets, config=config, rng=rng) for _ in range(batch_size)]
+    if method == "bandit":
+        groups = _catalog_groups(catalog)
+        rewards = _group_rewards(rows, groups)
+        return [
+            _random_candidate(groups.get(_choose_group(rewards, rng), catalog) or catalog, assets, config=config, rng=rng)
+            for _ in range(batch_size)
+        ]
     return [_sobol_like_candidate(catalog, assets, config=config, stage=config.stage, index=iteration * batch_size + offset) for offset in range(batch_size)]
 
 
@@ -1187,6 +1220,7 @@ def _stateful_method_offset(method: str) -> int:
         "smac_mf_real": 148_000,
         "beam": 149_000,
         "genetic": 157_000,
+        "bandit": 161_000,
         "machine_learning": 163_000,
     }.get(method, 0)
 

@@ -1,0 +1,61 @@
+name: Weekly SPY Sharpe 10 Methods 9h Merge Now
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run id from Weekly SPY Sharpe 10 Methods 9h Waves"
+        required: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CONFIG: configs/weekly_spy_sharpe_10methods_9h_waves.yaml
+  OUTPUT_DIR: outputs/weekly_spy_sharpe_10methods_9h
+  FILE_PREFIX: weekly_spy_sharpe_10methods_9h
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  merge-now:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download available method-stage artifacts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          run-id: ${{ inputs.source_run_id }}
+          path: outputs/weekly_spy_sharpe_10methods_9h/artifacts
+          pattern: weekly-spy-sharpe-10methods-9h-wave-*
+          merge-multiple: true
+          github-token: ${{ github.token }}
+      - name: Merge available artifacts
+        run: |
+          python scripts/merge_weekly_spy_sharpe_10methods_9h.py \
+            --config "$CONFIG" \
+            --input-glob "outputs/weekly_spy_sharpe_10methods_9h/artifacts/**/${FILE_PREFIX}_leaderboard_stage_*.csv" \
+            --output-dir "$OUTPUT_DIR" \
+            --file-prefix "$FILE_PREFIX" \
+            --expected-jobs 900
+      - name: Upload merged leaderboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-spy-sharpe-10methods-9h-waves-leaderboard
+          path: |
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_leaderboard.csv
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_verified.csv
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_relaxed_valid.csv
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_methods.csv
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_efficiency.csv
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_parallelism.json
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_state_summary.json
+            outputs/weekly_spy_sharpe_10methods_9h/weekly_spy_sharpe_10methods_9h_summary.json

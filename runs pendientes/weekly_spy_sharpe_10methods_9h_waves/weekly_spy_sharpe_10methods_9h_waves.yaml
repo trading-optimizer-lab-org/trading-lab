@@ -1,0 +1,28 @@
+status: pendiente_no_lanzar
+launch_requires_explicit_user_order: true
+workflow: Weekly SPY Sharpe 10 Methods 9h Waves
+workflow_file: .github/workflows/weekly-spy-sharpe-10methods-9h-waves.yml
+config_file: configs/weekly_spy_sharpe_10methods_9h_waves.yaml
+merge_now_workflow: Weekly SPY Sharpe 10 Methods 9h Merge Now
+stop_workflow: Weekly SPY Sharpe 10 Methods 9h Stop
+objective: maximize_train_sharpe
+validation_role: report_only
+locked_opened: false
+waves: 5
+jobs_per_wave: 180
+jobs_per_method_per_wave: 18
+jobs_total: 900
+jobs_per_method_total: 90
+minutes_per_method_stage: 85
+max_parallel: 180
+methods:
+  - beam
+  - genetic
+  - sobol_random_asha_real
+  - optuna_tpe_hyperband
+  - dehb_real
+  - bohb_real
+  - smac_mf_real
+  - bandit
+  - aurora_ml
+  - github_ml

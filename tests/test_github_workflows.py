@@ -593,6 +593,52 @@ def test_weekly_spy_sharpe_4methods_180_parallel_is_manual_balanced_and_locked_c
     assert "locked_opened: false" in config
 
 
+def test_weekly_spy_sharpe_10methods_9h_waves_is_pending_manual_balanced_and_locked_closed() -> None:
+    text = Path(".github/workflows/weekly-spy-sharpe-10methods-9h-waves.yml").read_text(encoding="utf-8")
+    wave = Path(".github/workflows/weekly-spy-sharpe-10methods-9h-wave.yml").read_text(encoding="utf-8")
+    merge_now = Path(".github/workflows/weekly-spy-sharpe-10methods-9h-merge-now.yml").read_text(encoding="utf-8")
+    stop = Path(".github/workflows/weekly-spy-sharpe-10methods-9h-stop.yml").read_text(encoding="utf-8")
+    config = Path("configs/weekly_spy_sharpe_10methods_9h_waves.yaml").read_text(encoding="utf-8")
+    pending = Path("runs pendientes/weekly_spy_sharpe_10methods_9h_waves/README.md").read_text(encoding="utf-8")
+
+    assert "name: Weekly SPY Sharpe 10 Methods 9h Waves" in text
+    assert "workflow_dispatch" in text
+    assert "push:" not in text
+    assert "wave-5:" in text
+    assert "uses: ./.github/workflows/weekly-spy-sharpe-10methods-9h-wave.yml" in text
+    assert "weekly-spy-sharpe-10methods-9h-waves-leaderboard" in text
+
+    assert "workflow_call" in wave
+    assert "stage: [0, 1, 2" in wave
+    assert "method: [beam, genetic, sobol_random_asha_real, optuna_tpe_hyperband, dehb_real, bohb_real, smac_mf_real, bandit, aurora_ml, github_ml]" in wave
+    assert "max-parallel: ${{ inputs.max_parallel }}" in wave
+    assert "--state-dir state_in" in wave
+    assert "scripts/run_weekly_spy_sharpe_10methods_9h_stage.py" in wave
+    assert "scripts/merge_weekly_spy_sharpe_10methods_9h_state.py" in wave
+
+    assert "source_run_id" in merge_now
+    assert "run-id: ${{ inputs.source_run_id }}" in merge_now
+    assert "continue-on-error: true" in merge_now
+    assert "scripts/merge_weekly_spy_sharpe_10methods_9h.py" in merge_now
+    assert "actions: write" in stop
+    assert "/actions/runs/${SOURCE_RUN_ID}/cancel" in stop
+
+    for method in ("beam", "genetic", "sobol_random_asha_real", "optuna_tpe_hyperband", "dehb_real", "bohb_real", "smac_mf_real", "bandit", "aurora_ml", "github_ml"):
+        assert f"  - {method}" in config
+    assert "waves: 5" in config
+    assert "jobs_per_wave: 180" in config
+    assert "jobs_per_method_total: 90" in config
+    assert "jobs_total: 900" in config
+    assert "max_parallel: 180" in config
+    assert "minutes_per_method_stage: 85" in config
+    assert "score_mode: train_sharpe_max_validation_80pct_report" in config
+    assert "validation_role: report_only" in config
+    assert "locked_opened: false" in config
+
+    assert "Estado: `pendiente_no_lanzar`" in pending
+    assert "No lanzar automaticamente" in pending
+
+
 def test_ci_is_manual_or_pull_request_only() -> None:
     text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 
