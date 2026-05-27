@@ -547,6 +547,21 @@ def test_weekly_7methods_start_overnight_after_fair_is_github_native() -> None:
     assert "/dispatches" in text
 
 
+def test_weekly_github_ml_until_first_valid_stops_after_found() -> None:
+    text = Path(".github/workflows/weekly-github-ml-until-first-valid.yml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch" in text
+    assert "validation_rule" in text
+    assert "positive_calmar" in text
+    assert "--method machine_learning" in text
+    assert "check-wave-1" in text
+    assert "search-wave-2:" in text
+    assert "if: needs.check-wave-1.outputs.found != 'true'" in text
+    assert "scripts/check_weekly_valid_candidate.py" in text
+    assert "weekly-github-ml-until-first-valid-current-merge" in text
+    assert "push:" not in text
+
+
 def test_ci_is_manual_or_pull_request_only() -> None:
     text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 
