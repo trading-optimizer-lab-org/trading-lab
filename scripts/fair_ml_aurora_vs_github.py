@@ -21,6 +21,7 @@ if str(SRC) not in sys.path:
 
 from trading_lab.config import load_yaml  # noqa: E402
 from trading_lab.data_loader import load_market_data  # noqa: E402
+from trading_lab.public_data import download_public_data  # noqa: E402
 from trading_lab.weekly_multi_asset import build_weekly_multi_asset_examples  # noqa: E402
 
 
@@ -71,6 +72,8 @@ def run_pair(args: argparse.Namespace) -> None:
     config_path = trading_lab_dir / args.config
     base_config = load_yaml(config_path)
     data_path = trading_lab_dir / base_config.get("data_path", "data/public/spy_daily.csv")
+    if not data_path.exists():
+        download_public_data(data_path)
     daily = load_market_data(data_path)
 
     if args.track == "normalized":

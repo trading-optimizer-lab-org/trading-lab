@@ -13,6 +13,9 @@ on:
     paths:
       - ".github/fair-ml-aurora-vs-github-30m-trigger.txt"
       - ".github/workflows/fair-ml-aurora-vs-github-30m.yml"
+      - "scripts/fair_ml_aurora_vs_github.py"
+      - "src/aurora/**"
+      - "pyproject.toml"
 
 permissions:
   contents: read
