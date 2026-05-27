@@ -14,6 +14,12 @@ from trading_lab.weekly_7methods_stateful import (
     merge_state_files,
 )
 from trading_lab.weekly_multi_asset import _weekly_calmar_score
+from trading_lab.weekly_multi_asset import (
+    WEEKLY_MAX_SHARPE_SCORE_MODE,
+    WeeklyMachineLearningCandidate,
+    _weekly_sharpe_score,
+    evaluate_weekly_machine_learning_candidate,
+)
 from scripts.merge_weekly_7methods_overnight import _partial_summary
 
 
@@ -87,6 +93,42 @@ def test_strict_verified_accepts_calmar_similarity_mode() -> None:
     assert verified["candidate_id"].tolist() == ["ok_calmar"]
 
 
+def test_strict_verified_accepts_sharpe_robust_mode_without_down_year_gate() -> None:
+    rows = pd.DataFrame(
+        [
+            _verified_row(
+                candidate_id="ok_sharpe",
+                score_mode=WEEKLY_MAX_SHARPE_SCORE_MODE,
+                accepted=True,
+                train_years_total=14,
+                validation_years_total=12,
+                train_down_years_total=0,
+                validation_down_years_total=0,
+                train_sharpe=1.8,
+                validation_sharpe=1.5,
+                train_cagr=0.06,
+                validation_cagr=0.04,
+                train_years_positive=10,
+                validation_years_positive=9,
+                average_abs_exposure=0.25,
+                train_sharpe_gt_1=True,
+                validation_sharpe_gt_1=True,
+                validation_sharpe_ratio_to_train=0.83,
+                validation_sharpe_ge_80pct_train=True,
+                train_cagr_ge_4pct=True,
+                validation_cagr_ge_3pct=True,
+                exposure_active_enough=True,
+                verified_sharpe_robust=True,
+                verified_train_validation_5pct=False,
+            )
+        ]
+    )
+
+    verified = _strict_verified(rows)
+
+    assert verified["candidate_id"].tolist() == ["ok_sharpe"]
+
+
 def test_weekly_calmar_score_prioritizes_train_calmar_before_tiebreakers() -> None:
     low_calmar_high_cagr = {
         "train_calmar": 1.5,
@@ -104,6 +146,72 @@ def test_weekly_calmar_score_prioritizes_train_calmar_before_tiebreakers() -> No
     }
 
     assert _weekly_calmar_score(high_calmar_low_cagr) > _weekly_calmar_score(low_calmar_high_cagr)
+
+
+def test_weekly_sharpe_score_prioritizes_train_sharpe_before_tiebreakers() -> None:
+    low_sharpe_high_cagr = {
+        "train_sharpe": 1.4,
+        "train_cagr": 0.40,
+        "train_mdd": -0.10,
+        "train_min_year_return": 0.10,
+        "feature_count": 3,
+    }
+    high_sharpe_low_cagr = {
+        "train_sharpe": 1.8,
+        "train_cagr": 0.05,
+        "train_mdd": -0.25,
+        "train_min_year_return": 0.02,
+        "feature_count": 8,
+    }
+
+    assert _weekly_sharpe_score(high_sharpe_low_cagr) > _weekly_sharpe_score(low_sharpe_high_cagr)
+
+
+def test_weekly_machine_learning_candidate_fits_train_only_and_keeps_locked_closed() -> None:
+    weeks = pd.date_range("1994-01-07", "2019-12-27", freq="W-FRI")
+    trend = pd.Series(range(len(weeks)), dtype=float)
+    examples = pd.DataFrame(
+        {
+            "decision_date": weeks,
+            "target_week_end": weeks,
+            "target_year": weeks.year,
+            "target_month": weeks.month,
+            "target_week": [int(value.isocalendar().week) for value in weeks],
+            "spy_return_next_week": 0.001 + 0.00001 * trend,
+            "locked_period": False,
+            "sp500_down_year": False,
+            "feature_a": trend / max(float(len(weeks)), 1.0),
+            "feature_b": (trend % 13) / 13.0,
+            "asset_spy_return_next_week": 0.001 + 0.00001 * trend,
+            "asset_spy_mom_4w": 0.02,
+            "asset_spy_mom_13w": 0.03,
+            "asset_spy_mom_26w": 0.04,
+            "asset_spy_mom_52w": 0.05,
+            "asset_spy_vol_13w": 0.10,
+        }
+    )
+    candidate = WeeklyMachineLearningCandidate(
+        features=("feature_a", "feature_b"),
+        assets=("SPY",),
+        selector="momentum_26w",
+        model="ridge",
+        scale=1.0,
+        random_seed=7,
+    )
+
+    row, positions, _ = evaluate_weekly_machine_learning_candidate(
+        examples,
+        candidate,
+        score_mode=WEEKLY_MAX_SHARPE_SCORE_MODE,
+    )
+
+    assert row["method"] == "machine_learning"
+    assert row["locked_opened"] is False
+    assert row["validation_role"] == "report_only"
+    assert row["ml_model"] == "ridge"
+    assert "train_sharpe" in row
+    assert positions["period"].isin(["train", "validation"]).all()
+    assert positions["exposure"].between(-1.0, 1.0).all()
 
 
 def test_5h_public_methods_map_to_existing_engines() -> None:

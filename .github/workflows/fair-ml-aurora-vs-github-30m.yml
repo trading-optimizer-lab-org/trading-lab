@@ -1,0 +1,109 @@
+name: Fair ML Aurora vs GitHub 30m
+
+on:
+  workflow_dispatch:
+    inputs:
+      seconds_per_engine:
+        description: Effective seconds per engine inside each paired job
+        required: false
+        default: "480"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: ${{ matrix.track }} / ${{ matrix.order }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - track: normalized
+            order: aurora_first
+          - track: normalized
+            order: github_first
+    steps:
+      - name: Checkout trading-lab
+        uses: actions/checkout@v4
+        with:
+          path: trading-lab
+
+      - name: Checkout QuantForge / Aurora
+        uses: actions/checkout@v4
+        with:
+          repository: gomez5757/quantforge
+          path: quantforge
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install benchmark dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "trading-lab[hpo]"
+          python -m pip install -e "quantforge[ml]"
+
+      - name: Run paired benchmark
+        run: |
+          python trading-lab/scripts/fair_ml_aurora_vs_github.py run-pair \
+            --track "${{ matrix.track }}" \
+            --order "${{ matrix.order }}" \
+            --seconds-per-engine "${{ inputs.seconds_per_engine }}" \
+            --trading-lab-dir "$GITHUB_WORKSPACE/trading-lab" \
+            --quantforge-dir "$GITHUB_WORKSPACE/quantforge" \
+            --output-dir "$GITHUB_WORKSPACE/results/${{ matrix.track }}-${{ matrix.order }}"
+
+      - name: Upload pair artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fair-ml-pair-${{ matrix.track }}-${{ matrix.order }}
+          path: results/${{ matrix.track }}-${{ matrix.order }}
+          if-no-files-found: warn
+
+  merge:
+    name: Merge fair ML benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: benchmark
+    if: always()
+    steps:
+      - name: Checkout trading-lab
+        uses: actions/checkout@v4
+        with:
+          path: trading-lab
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install merge dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e trading-lab
+
+      - name: Download pair artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fair-ml-pair-*
+          path: pair-results
+          merge-multiple: false
+
+      - name: Merge benchmark results
+        run: |
+          python trading-lab/scripts/fair_ml_aurora_vs_github.py merge \
+            --input-root "$GITHUB_WORKSPACE/pair-results" \
+            --output-dir "$GITHUB_WORKSPACE/fair-ml-aurora-vs-github-30m-results"
+
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fair-ml-aurora-vs-github-30m-results
+          path: fair-ml-aurora-vs-github-30m-results
+          if-no-files-found: error

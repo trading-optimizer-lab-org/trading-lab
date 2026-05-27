@@ -27,6 +27,7 @@ from trading_lab.monthly_risk import (
 MIN_DOWN_YEAR_RETURN = 0.05
 WEEKLY_DOWN_5PCT_SCORE_MODE = "train_only_weekly_sp500_down_5pct"
 WEEKLY_MAX_CALMAR_SCORE_MODE = "train_calmar_max_validation_80pct_report"
+WEEKLY_MAX_SHARPE_SCORE_MODE = "train_sharpe_max_validation_80pct_report"
 WEEKLY_ASSET_SELECTORS = ("momentum_4w", "momentum_13w", "momentum_26w", "momentum_52w", "low_vol_13w")
 WEEKLY_METHODS = ("random_broad", "beam", "genetic", "bayesian_like", "bandit")
 
@@ -39,6 +40,21 @@ class WeeklyMultiAssetCandidate:
     intercept: float = 0.0
     scale: float = 1.0
     smoothing: float = 0.0
+
+
+@dataclass(frozen=True)
+class WeeklyMachineLearningCandidate:
+    features: tuple[str, ...]
+    assets: tuple[str, ...]
+    selector: str = "momentum_26w"
+    model: str = "ridge"
+    alpha: float = 1.0
+    n_estimators: int = 64
+    max_depth: int = 3
+    learning_rate: float = 0.05
+    scale: float = 1.0
+    intercept: float = 0.0
+    random_seed: int = 0
 
 
 def build_weekly_multi_asset_examples(
@@ -182,6 +198,8 @@ def evaluate_weekly_multi_asset_candidate(
         "validation_down_min_return": _min_year_return(validation_down),
         "train_cagr": train_metrics["cagr"],
         "validation_cagr": validation_metrics["cagr"],
+        "train_sharpe": train_metrics["sharpe"],
+        "validation_sharpe": validation_metrics["sharpe"],
         "train_mdd": train_metrics["mdd"],
         "validation_mdd": validation_metrics["mdd"],
         "train_calmar": train_metrics["calmar"],
@@ -209,6 +227,14 @@ def evaluate_weekly_multi_asset_candidate(
         "validation_calmar_ratio_to_train": np.nan,
         "validation_calmar_ge_80pct_train": False,
         "verified_calmar_similarity": False,
+        "train_sharpe_gt_1": False,
+        "validation_sharpe_gt_1": False,
+        "validation_sharpe_ratio_to_train": np.nan,
+        "validation_sharpe_ge_80pct_train": False,
+        "train_cagr_ge_4pct": False,
+        "validation_cagr_ge_3pct": False,
+        "exposure_active_enough": False,
+        "verified_sharpe_robust": False,
         "rejection_reason": "",
         "weekly_multi_asset_score": 0.0,
     }
@@ -218,11 +244,166 @@ def evaluate_weekly_multi_asset_candidate(
         row["accepted"] = row["rejection_reason"] == ""
         row["verified_train_validation_5pct"] = False
         row["weekly_multi_asset_score"] = _weekly_calmar_score(row)
+    elif score_mode == WEEKLY_MAX_SHARPE_SCORE_MODE:
+        _stamp_sharpe_verification(row)
+        row["rejection_reason"] = _sharpe_rejection_reason(row)
+        row["accepted"] = row["rejection_reason"] == ""
+        row["verified_train_validation_5pct"] = False
+        row["weekly_multi_asset_score"] = _weekly_sharpe_score(row)
     else:
         row["rejection_reason"] = _rejection_reason(row)
         row["accepted"] = row["rejection_reason"] == ""
         row["verified_train_validation_5pct"] = _is_verified(row)
         row["weekly_multi_asset_score"] = _weekly_score(row)
+    return row, positions, year_by_year
+
+
+def evaluate_weekly_machine_learning_candidate(
+    examples: pd.DataFrame,
+    candidate: WeeklyMachineLearningCandidate,
+    *,
+    method: str = "machine_learning",
+    score_mode: str = WEEKLY_MAX_SHARPE_SCORE_MODE,
+) -> tuple[dict[str, object], pd.DataFrame, pd.DataFrame]:
+    usable = _without_locked_weekly(examples)
+    candidate_id = _ml_candidate_id(candidate)
+    selected_assets = _select_assets(
+        usable,
+        WeeklyMultiAssetCandidate(tuple(), candidate.assets, selector=candidate.selector),
+    )
+    asset_returns = _selected_asset_returns(usable, selected_assets)
+    periods = _period_labels_weekly(usable)
+    train_mask = periods == "train"
+    features = [feature for feature in candidate.features if feature in usable.columns]
+    if not features:
+        features = _ml_feature_names(usable)[:1]
+    x_raw = usable[features].apply(pd.to_numeric, errors="coerce")
+    train_x = x_raw.loc[train_mask]
+    medians = train_x.median(numeric_only=True).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    x = x_raw.replace([np.inf, -np.inf], np.nan).fillna(medians).fillna(0.0).to_numpy(dtype=float)
+    y = np.asarray(asset_returns, dtype=float)
+    if train_mask.sum() < 20 or np.nanstd(y[train_mask]) <= 1e-12:
+        predictions = np.zeros(len(usable), dtype=float)
+        model_error = "insufficient_train_data"
+    else:
+        try:
+            predictions = _fit_predict_ml(candidate, x[train_mask], y[train_mask], x)
+            model_error = ""
+        except Exception as exc:
+            predictions = np.zeros(len(usable), dtype=float)
+            model_error = f"{type(exc).__name__}: {exc}"
+    train_predictions = predictions[train_mask] if len(predictions) else np.array([], dtype=float)
+    pred_std = float(np.nanstd(train_predictions)) if len(train_predictions) else 0.0
+    denom = pred_std if pred_std > 1e-12 else 1.0
+    exposures = np.clip(np.tanh(candidate.intercept + candidate.scale * predictions / denom), -1.0, 1.0)
+    strategy_returns = exposures * asset_returns
+    spy_returns = pd.to_numeric(usable["spy_return_next_week"], errors="coerce").fillna(0.0).to_numpy()
+    positions = pd.DataFrame(
+        {
+            "candidate_id": candidate_id,
+            "method": method,
+            "decision_date": pd.to_datetime(usable["decision_date"]).to_numpy(),
+            "target_week_end": pd.to_datetime(usable["target_week_end"]).to_numpy(),
+            "target_year": usable["target_year"].astype(int).to_numpy(),
+            "target_week": usable["target_week"].astype(int).to_numpy(),
+            "period": periods,
+            "traded_asset": selected_assets,
+            "asset_return": asset_returns,
+            "spy_return": spy_returns,
+            "sp500_down_year": usable["sp500_down_year"].astype(bool).to_numpy(),
+            "exposure": exposures,
+            "strategy_return": strategy_returns,
+            "ml_prediction": predictions,
+        }
+    )
+    year_by_year = _year_by_year(positions)
+    train_metrics = _weekly_return_metrics(positions.loc[positions["period"] == "train", "strategy_return"])
+    validation_metrics = _weekly_return_metrics(
+        positions.loc[positions["period"] == "validation", "strategy_return"]
+    )
+    train_years = year_by_year[year_by_year["period"] == "train"]
+    validation_years = year_by_year[year_by_year["period"] == "validation"]
+    train_down = train_years[train_years["sp500_down_year"].astype(bool)]
+    validation_down = validation_years[validation_years["sp500_down_year"].astype(bool)]
+    row: dict[str, object] = {
+        "candidate_id": candidate_id,
+        "method": method,
+        "specs": ";".join(features),
+        "rules": f"ML {candidate.model} fit on train only, predict weekly exposure",
+        "features": ",".join(features),
+        "feature_count": len(features),
+        "assets": ",".join(candidate.assets),
+        "asset_selector": candidate.selector,
+        "traded_asset_mode": "weekly_rotation_ml",
+        "weekly_exposure_formula": f"asset = weekly best by {candidate.selector}; exposure = tanh({candidate.intercept:.4f} + {candidate.scale:.4f} * {candidate.model}_prediction_z)",
+        "intercept": float(candidate.intercept),
+        "scale": float(candidate.scale),
+        "smoothing": 0.0,
+        "ml_model": candidate.model,
+        "ml_alpha": float(candidate.alpha),
+        "ml_n_estimators": int(candidate.n_estimators),
+        "ml_max_depth": int(candidate.max_depth),
+        "ml_learning_rate": float(candidate.learning_rate),
+        "ml_random_seed": int(candidate.random_seed),
+        "ml_model_error": model_error,
+        "train_years_positive": _count_positive_years(train_years),
+        "train_years_total": int(len(train_years)),
+        "validation_years_positive": _count_positive_years(validation_years),
+        "validation_years_total": int(len(validation_years)),
+        "train_down_years_ge_5pct": _count_down_years_ge_5pct(train_down),
+        "train_down_years_total": int(len(train_down)),
+        "validation_down_years_ge_5pct": _count_down_years_ge_5pct(validation_down),
+        "validation_down_years_total": int(len(validation_down)),
+        "train_min_year_return": _min_year_return(train_years),
+        "validation_min_year_return": _min_year_return(validation_years),
+        "train_down_min_return": _min_year_return(train_down),
+        "validation_down_min_return": _min_year_return(validation_down),
+        "train_cagr": train_metrics["cagr"],
+        "validation_cagr": validation_metrics["cagr"],
+        "train_sharpe": train_metrics["sharpe"],
+        "validation_sharpe": validation_metrics["sharpe"],
+        "train_mdd": train_metrics["mdd"],
+        "validation_mdd": validation_metrics["mdd"],
+        "train_calmar": train_metrics["calmar"],
+        "validation_calmar": validation_metrics["calmar"],
+        "average_exposure": float(np.mean(exposures)) if len(exposures) else 0.0,
+        "average_abs_exposure": float(np.mean(np.abs(exposures))) if len(exposures) else 0.0,
+        "min_exposure": float(np.min(exposures)) if len(exposures) else 0.0,
+        "max_exposure": float(np.max(exposures)) if len(exposures) else 0.0,
+        "weeks_long": int(np.sum(exposures > 0.05)),
+        "weeks_cash_like": int(np.sum(np.abs(exposures) <= 0.05)),
+        "weeks_short": int(np.sum(exposures < -0.05)),
+        "exposure_turnover": float(np.mean(np.abs(np.diff(exposures)))) if len(exposures) > 1 else 0.0,
+        "unique_assets_used": int(pd.Series(selected_assets).nunique()) if len(selected_assets) else 0,
+        "most_used_asset": str(pd.Series(selected_assets).mode().iloc[0]) if len(selected_assets) else "",
+        "cash_allowed": True,
+        "short_allowed": True,
+        "locked_opened": False,
+        "locked_weeks": 0,
+        "validation_role": "report_only",
+        "score_mode": score_mode,
+        "accepted": False,
+        "verified_train_validation_5pct": False,
+        "train_calmar_gt_1": False,
+        "validation_calmar_gt_1": False,
+        "validation_calmar_ratio_to_train": np.nan,
+        "validation_calmar_ge_80pct_train": False,
+        "verified_calmar_similarity": False,
+        "train_sharpe_gt_1": False,
+        "validation_sharpe_gt_1": False,
+        "validation_sharpe_ratio_to_train": np.nan,
+        "validation_sharpe_ge_80pct_train": False,
+        "train_cagr_ge_4pct": False,
+        "validation_cagr_ge_3pct": False,
+        "exposure_active_enough": False,
+        "verified_sharpe_robust": False,
+        "rejection_reason": "",
+        "weekly_multi_asset_score": 0.0,
+    }
+    _stamp_sharpe_verification(row)
+    row["rejection_reason"] = _sharpe_rejection_reason(row)
+    row["accepted"] = row["rejection_reason"] == ""
+    row["weekly_multi_asset_score"] = _weekly_sharpe_score(row)
     return row, positions, year_by_year
 
 
@@ -340,9 +521,24 @@ def merge_weekly_multi_asset_leaderboards(
     verified.to_csv(output / "weekly_multi_asset_sp500_down_5pct_verified.csv", index=False)
     if examples is not None and not merged.empty:
         print("building best-candidate positions", flush=True)
-        best = _candidate_from_row(merged.iloc[0])
         method = str(merged.iloc[0].get("method", "merged") or "merged")
-        _, positions, year_by_year = evaluate_weekly_multi_asset_candidate(examples, best, method=method)
+        score_mode = str(merged.iloc[0].get("score_mode", WEEKLY_DOWN_5PCT_SCORE_MODE) or WEEKLY_DOWN_5PCT_SCORE_MODE)
+        if method == "machine_learning" or str(merged.iloc[0].get("ml_model", "")):
+            best_ml = _ml_candidate_from_row(merged.iloc[0])
+            _, positions, year_by_year = evaluate_weekly_machine_learning_candidate(
+                examples,
+                best_ml,
+                method=method,
+                score_mode=score_mode,
+            )
+        else:
+            best = _candidate_from_row(merged.iloc[0])
+            _, positions, year_by_year = evaluate_weekly_multi_asset_candidate(
+                examples,
+                best,
+                method=method,
+                score_mode=score_mode,
+            )
     else:
         positions = pd.DataFrame()
         year_by_year = pd.DataFrame()
@@ -352,7 +548,9 @@ def merge_weekly_multi_asset_leaderboards(
         "rows": int(len(merged)),
         "candidates_evaluated": int(len(raw)),
         "accepted": int(merged.get("accepted", pd.Series(dtype=bool)).astype(bool).sum()),
-        "verified_train_validation_5pct": int(len(verified)),
+        "verified_train_validation_5pct": int(merged.get("verified_train_validation_5pct", pd.Series(dtype=bool)).astype(bool).sum()),
+        "verified_calmar_similarity": int(merged.get("verified_calmar_similarity", pd.Series(dtype=bool)).astype(bool).sum()),
+        "verified_sharpe_robust": int(merged.get("verified_sharpe_robust", pd.Series(dtype=bool)).astype(bool).sum()),
         "unique_verified_train_validation_5pct": int(verified["candidate_id"].nunique()) if "candidate_id" in verified else 0,
         "best_candidate": str(merged.iloc[0]["candidate_id"]) if not merged.empty else None,
         "best_method": str(merged.iloc[0].get("method", "")) if not merged.empty else None,
@@ -364,7 +562,7 @@ def merge_weekly_multi_asset_leaderboards(
         "best_validation_down_min_return": float(merged.iloc[0].get("validation_down_min_return", np.nan)) if not merged.empty else None,
         "best_verified_candidate": str(verified.iloc[0]["candidate_id"]) if not verified.empty else None,
         "locked_opened": False,
-        "score_mode": "train_only_weekly_sp500_down_5pct",
+        "score_mode": str(merged.iloc[0].get("score_mode", WEEKLY_DOWN_5PCT_SCORE_MODE)) if not merged.empty else WEEKLY_DOWN_5PCT_SCORE_MODE,
         "validation_role": "report_only",
         "train_down_years_expected": [2000, 2001, 2002],
         "validation_down_years_expected": [2008, 2018],
@@ -671,7 +869,7 @@ def _year_by_year(positions: pd.DataFrame) -> pd.DataFrame:
 def _weekly_return_metrics(returns: pd.Series) -> dict[str, float]:
     values = pd.to_numeric(returns, errors="coerce").fillna(0.0).to_numpy(dtype=float)
     if len(values) == 0:
-        return {"cagr": 0.0, "mdd": 0.0, "calmar": 0.0}
+        return {"cagr": 0.0, "mdd": 0.0, "calmar": 0.0, "sharpe": 0.0}
     equity = np.cumprod(1.0 + values)
     years = max(len(values) / 52.0, 1e-9)
     cagr = float(equity[-1] ** (1.0 / years) - 1.0) if equity[-1] > 0.0 else -1.0
@@ -679,7 +877,9 @@ def _weekly_return_metrics(returns: pd.Series) -> dict[str, float]:
     drawdown = equity / peak - 1.0
     mdd = float(drawdown.min())
     calmar = float(cagr / abs(mdd)) if mdd < 0.0 else float("inf") if cagr > 0 else 0.0
-    return {"cagr": cagr, "mdd": mdd, "calmar": calmar}
+    std = float(np.std(values, ddof=1)) if len(values) > 1 else 0.0
+    sharpe = float(np.mean(values) / std * np.sqrt(52.0)) if std > 1e-12 else 0.0
+    return {"cagr": cagr, "mdd": mdd, "calmar": calmar, "sharpe": sharpe}
 
 
 def _build_weekly_spec_catalog(examples: pd.DataFrame) -> list[str]:
@@ -934,6 +1134,24 @@ def _candidate_from_row(row: dict[str, object] | pd.Series) -> WeeklyMultiAssetC
     )
 
 
+def _ml_candidate_from_row(row: dict[str, object] | pd.Series) -> WeeklyMachineLearningCandidate:
+    features = tuple(part for part in str(row.get("features", "")).split(",") if part)
+    assets = tuple(part for part in str(row.get("assets", "SPY")).split(",") if part)
+    return WeeklyMachineLearningCandidate(
+        features=features,
+        assets=assets or ("SPY",),
+        selector=str(row.get("asset_selector", "momentum_26w") or "momentum_26w"),
+        model=str(row.get("ml_model", "ridge") or "ridge"),
+        alpha=float(row.get("ml_alpha", 1.0) or 1.0),
+        n_estimators=int(float(row.get("ml_n_estimators", 64) or 64)),
+        max_depth=int(float(row.get("ml_max_depth", 3) or 3)),
+        learning_rate=float(row.get("ml_learning_rate", 0.05) or 0.05),
+        scale=float(row.get("scale", 1.0) or 1.0),
+        intercept=float(row.get("intercept", 0.0) or 0.0),
+        random_seed=int(float(row.get("ml_random_seed", 0) or 0)),
+    )
+
+
 def _candidate_id(candidate: WeeklyMultiAssetCandidate) -> str:
     payload = json.dumps(
         {
@@ -1015,12 +1233,56 @@ def _stamp_calmar_verification(row: dict[str, object]) -> None:
     )
 
 
+def _stamp_sharpe_verification(row: dict[str, object]) -> None:
+    train_sharpe = _finite_float(row.get("train_sharpe"), default=-1.0)
+    validation_sharpe = _finite_float(row.get("validation_sharpe"), default=-1.0)
+    train_cagr = _finite_float(row.get("train_cagr"), default=-1.0)
+    validation_cagr = _finite_float(row.get("validation_cagr"), default=-1.0)
+    avg_abs = _finite_float(row.get("average_abs_exposure"), default=0.0)
+    ratio = float("nan")
+    if np.isfinite(train_sharpe) and train_sharpe > 0.0 and np.isfinite(validation_sharpe):
+        ratio = float(validation_sharpe / train_sharpe)
+    row["train_sharpe_gt_1"] = bool(np.isfinite(train_sharpe) and train_sharpe > 1.0)
+    row["validation_sharpe_gt_1"] = bool(np.isfinite(validation_sharpe) and validation_sharpe > 1.0)
+    row["validation_sharpe_ratio_to_train"] = ratio
+    row["validation_sharpe_ge_80pct_train"] = bool(np.isfinite(ratio) and ratio >= 0.80)
+    row["train_cagr_ge_4pct"] = bool(np.isfinite(train_cagr) and train_cagr >= 0.04)
+    row["validation_cagr_ge_3pct"] = bool(np.isfinite(validation_cagr) and validation_cagr >= 0.03)
+    row["exposure_active_enough"] = bool(np.isfinite(avg_abs) and avg_abs >= 0.15)
+    row["verified_sharpe_robust"] = bool(
+        row["train_sharpe_gt_1"]
+        and row["validation_sharpe_gt_1"]
+        and row["validation_sharpe_ge_80pct_train"]
+        and row["train_cagr_ge_4pct"]
+        and row["validation_cagr_ge_3pct"]
+        and int(row.get("train_years_positive", 0) or 0) >= 10
+        and int(row.get("validation_years_positive", 0) or 0) >= 9
+        and row["exposure_active_enough"]
+        and not bool(row.get("locked_opened"))
+    )
+
+
 def _calmar_rejection_reason(row: dict[str, object]) -> str:
     if int(row.get("train_years_total", 0) or 0) == 0:
         return "no_train_years"
     train_calmar = _finite_float(row.get("train_calmar"), default=-1.0)
     if not np.isfinite(train_calmar) or train_calmar <= 1.0:
         return "train_calmar_below_or_equal_1"
+    return ""
+
+
+def _sharpe_rejection_reason(row: dict[str, object]) -> str:
+    if int(row.get("train_years_total", 0) or 0) == 0:
+        return "no_train_years"
+    train_sharpe = _finite_float(row.get("train_sharpe"), default=-1.0)
+    if not np.isfinite(train_sharpe) or train_sharpe <= 1.0:
+        return "train_sharpe_below_or_equal_1"
+    if _finite_float(row.get("train_cagr"), default=-1.0) < 0.04:
+        return "train_cagr_below_4pct"
+    if int(row.get("train_years_positive", 0) or 0) < 10:
+        return "train_positive_years_below_10"
+    if _finite_float(row.get("average_abs_exposure"), default=0.0) < 0.15:
+        return "average_abs_exposure_below_15pct"
     return ""
 
 
@@ -1033,6 +1295,22 @@ def _weekly_calmar_score(row: dict[str, object]) -> float:
     calmar = min(train_calmar, 1_000_000.0) if np.isfinite(train_calmar) else -1_000_000.0
     return float(
         calmar * 1_000_000.0
+        + train_cagr * 100_000.0
+        + train_min * 10_000.0
+        - abs(train_mdd) * 1_000.0
+        - max(0, feature_count - 5) * 10.0
+    )
+
+
+def _weekly_sharpe_score(row: dict[str, object]) -> float:
+    train_sharpe = _finite_float(row.get("train_sharpe"), default=-1_000_000.0)
+    train_cagr = _finite_float(row.get("train_cagr"), default=-1.0)
+    train_mdd = _finite_float(row.get("train_mdd"), default=-1.0)
+    train_min = _finite_float(row.get("train_min_year_return"), default=-1.0)
+    feature_count = int(row.get("feature_count", 0) or 0)
+    sharpe = min(train_sharpe, 1_000_000.0) if np.isfinite(train_sharpe) else -1_000_000.0
+    return float(
+        sharpe * 1_000_000.0
         + train_cagr * 100_000.0
         + train_min * 10_000.0
         - abs(train_mdd) * 1_000.0
@@ -1081,6 +1359,10 @@ def _weekly_score(row: dict[str, object]) -> float:
 def _verified(rows: pd.DataFrame) -> pd.DataFrame:
     if rows.empty:
         return rows.copy()
+    if "verified_sharpe_robust" in rows:
+        sharpe_mask = rows["verified_sharpe_robust"].astype(bool)
+        if sharpe_mask.any():
+            return rows.loc[sharpe_mask].sort_values("weekly_multi_asset_score", ascending=False).copy()
     if "verified_calmar_similarity" in rows:
         calmar_mask = rows["verified_calmar_similarity"].astype(bool)
         if calmar_mask.any():
@@ -1177,6 +1459,87 @@ def _method_offset(method: str) -> int:
         "random_broad": 11_000,
         "beam": 23_000,
         "genetic": 37_000,
+        "machine_learning": 43_000,
         "bayesian_like": 41_000,
         "bandit": 53_000,
     }.get(method, 0)
+
+
+def _ml_feature_names(examples: pd.DataFrame) -> list[str]:
+    skip = {
+        "decision_date",
+        "target_week_end",
+        "target_year",
+        "target_month",
+        "target_week",
+        "spy_return_next_week",
+        "locked_period",
+        "sp500_down_year",
+    }
+    skip.update({column for column in examples.columns if column.endswith("_return_next_week")})
+    names = []
+    usable = _without_locked_weekly(examples)
+    train = usable.loc[_period_labels_weekly(usable) == "train"]
+    for column in usable.columns:
+        if column in skip:
+            continue
+        series = pd.to_numeric(train[column], errors="coerce")
+        if series.notna().sum() >= max(52, int(len(train) * 0.20)) and series.nunique(dropna=True) >= 2:
+            names.append(column)
+    return sorted(names)
+
+
+def _fit_predict_ml(
+    candidate: WeeklyMachineLearningCandidate,
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    x_predict: np.ndarray,
+) -> np.ndarray:
+    if candidate.model == "ridge":
+        from sklearn.linear_model import Ridge
+
+        model = Ridge(alpha=float(candidate.alpha), random_state=int(candidate.random_seed))
+    elif candidate.model == "random_forest":
+        from sklearn.ensemble import RandomForestRegressor
+
+        model = RandomForestRegressor(
+            n_estimators=int(candidate.n_estimators),
+            max_depth=int(candidate.max_depth),
+            min_samples_leaf=8,
+            random_state=int(candidate.random_seed),
+            n_jobs=1,
+        )
+    elif candidate.model == "hist_gradient_boosting":
+        from sklearn.ensemble import HistGradientBoostingRegressor
+
+        model = HistGradientBoostingRegressor(
+            max_iter=80,
+            max_leaf_nodes=max(4, int(candidate.max_depth) * 4),
+            learning_rate=float(candidate.learning_rate),
+            l2_regularization=float(candidate.alpha),
+            random_state=int(candidate.random_seed),
+        )
+    else:
+        raise ValueError(f"unknown weekly ML model: {candidate.model}")
+    model.fit(np.asarray(x_train, dtype=float), np.asarray(y_train, dtype=float))
+    return np.asarray(model.predict(np.asarray(x_predict, dtype=float)), dtype=float).reshape(-1)
+
+
+def _ml_candidate_id(candidate: WeeklyMachineLearningCandidate) -> str:
+    payload = json.dumps(
+        {
+            "features": sorted(candidate.features),
+            "assets": sorted(candidate.assets),
+            "selector": candidate.selector,
+            "model": candidate.model,
+            "alpha": round(float(candidate.alpha), 6),
+            "n_estimators": int(candidate.n_estimators),
+            "max_depth": int(candidate.max_depth),
+            "learning_rate": round(float(candidate.learning_rate), 6),
+            "scale": round(float(candidate.scale), 6),
+            "intercept": round(float(candidate.intercept), 6),
+            "random_seed": int(candidate.random_seed),
+        },
+        sort_keys=True,
+    )
+    return "weekly_ml_asset_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]

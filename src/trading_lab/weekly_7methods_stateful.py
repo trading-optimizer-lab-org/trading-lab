@@ -11,7 +11,9 @@ import pandas as pd
 
 from trading_lab.monthly_risk import MonthlyRiskSearchConfig, _json_safe
 from trading_lab.weekly_multi_asset import (
+    WEEKLY_MAX_SHARPE_SCORE_MODE,
     WEEKLY_ASSET_SELECTORS,
+    WeeklyMachineLearningCandidate,
     WeeklyMultiAssetCandidate,
     _asset_universes,
     _available_assets_from_examples,
@@ -30,6 +32,8 @@ from trading_lab.weekly_multi_asset import (
     _spec_weights_from_rows,
     _verified,
     _weighted_candidate,
+    _ml_feature_names,
+    evaluate_weekly_machine_learning_candidate,
     evaluate_weekly_multi_asset_candidate,
     merge_weekly_multi_asset_leaderboards,
 )
@@ -55,7 +59,11 @@ FAIR_5H_WEEKLY_METHODS = (
     "genetic",
 )
 
-ALL_STATEFUL_WEEKLY_METHODS = tuple(dict.fromkeys((*STATEFUL_WEEKLY_METHODS, *FAIR_5H_WEEKLY_METHODS)))
+SHARPE_3METHOD_WEEKLY_METHODS = ("beam", "genetic", "machine_learning")
+
+ALL_STATEFUL_WEEKLY_METHODS = tuple(
+    dict.fromkeys((*STATEFUL_WEEKLY_METHODS, *FAIR_5H_WEEKLY_METHODS, *SHARPE_3METHOD_WEEKLY_METHODS))
+)
 
 METHOD_ENGINE_ALIASES = {
     "sobol_random_asha_real": "real_hpo",
@@ -91,6 +99,15 @@ def run_stateful_weekly_search(
         return [], _empty_state(method, wave, stage)
 
     engine_method = _engine_method(method)
+    if engine_method == "machine_learning":
+        return run_weekly_machine_learning_search(
+            examples,
+            config,
+            method=method,
+            wave=wave,
+            stage=stage,
+            time_budget_minutes=time_budget_minutes,
+        )
     if engine_method == "real_hpo":
         return run_real_hpo_weekly_search(
             examples,
@@ -145,6 +162,80 @@ def run_stateful_weekly_search(
         if time_budget_minutes <= 0:
             break
 
+    rows = _trim_stage_rows(rows, config.top_rows_per_stage)
+    state = build_method_state(rows, method=method, wave=wave, stage=stage)
+    return rows, state
+
+
+def run_weekly_machine_learning_search(
+    examples: pd.DataFrame,
+    config: MonthlyRiskSearchConfig,
+    *,
+    method: str,
+    wave: int,
+    stage: int,
+    time_budget_minutes: float,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    assets = _available_assets_from_examples(examples)
+    feature_names = _ml_feature_names(examples)
+    if not assets or not feature_names:
+        return [], _empty_state(method, wave, stage)
+    stage_features = [name for index, name in enumerate(feature_names) if index % config.total_stages == config.stage] or feature_names
+    universes = _asset_universes(assets)
+    seed = int(config.random_seed + wave * 1_000_000 + stage * 10_000 + _stateful_method_offset(method))
+    rng = np.random.default_rng(seed)
+    seen: set[tuple[tuple[str, ...], tuple[str, ...], str, str, float, int, int, float, float, float]] = set()
+    rows: list[dict[str, object]] = []
+    start = time.monotonic()
+    deadline = start + max(1.0, float(time_budget_minutes) * 60.0)
+    iteration = 0
+    while time.monotonic() < deadline or iteration == 0:
+        candidates = _next_ml_candidates(stage_features, universes, config=config, rng=rng, stage=stage, iteration=iteration)
+        if not candidates:
+            break
+        for candidate in candidates:
+            key = (
+                tuple(sorted(candidate.features)),
+                tuple(sorted(candidate.assets)),
+                candidate.selector,
+                candidate.model,
+                round(float(candidate.alpha), 4),
+                int(candidate.n_estimators),
+                int(candidate.max_depth),
+                round(float(candidate.learning_rate), 4),
+                round(float(candidate.scale), 4),
+                round(float(candidate.intercept), 4),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            row, _, _ = evaluate_weekly_machine_learning_candidate(
+                examples,
+                candidate,
+                method=method,
+                score_mode=config.score_mode or WEEKLY_MAX_SHARPE_SCORE_MODE,
+            )
+            elapsed = max(0.0, time.monotonic() - start)
+            row["method"] = method
+            row["wave"] = int(wave)
+            row["stage"] = int(stage)
+            row["elapsed_seconds"] = float(elapsed)
+            row["candidates_evaluated"] = int(len(rows) + 1)
+            row["first_seen_wave"] = int(wave)
+            row["first_seen_minute"] = float(elapsed / 60.0)
+            row["accepted"] = bool(row.get("accepted")) and _has_expected_train_counts(row)
+            row["verified_sharpe_robust"] = (
+                bool(row.get("accepted"))
+                and _has_expected_validation_counts(row)
+                and bool(row.get("verified_sharpe_robust"))
+            )
+            row["verified_train_validation_5pct"] = False
+            row["locked_opened"] = False
+            row["validation_role"] = "report_only"
+            rows.append(row)
+        iteration += 1
+        if time_budget_minutes <= 0:
+            break
     rows = _trim_stage_rows(rows, config.top_rows_per_stage)
     state = build_method_state(rows, method=method, wave=wave, stage=stage)
     return rows, state
@@ -352,23 +443,30 @@ def merge_stateful_weekly_leaderboards(
     score_mode = str(leaderboard.iloc[0].get("score_mode", summary.get("score_mode", ""))) if not leaderboard.empty else str(summary.get("score_mode", ""))
     verified_down_5pct = int(leaderboard.get("verified_train_validation_5pct", pd.Series(dtype=bool)).astype(bool).sum()) if not leaderboard.empty else 0
     verified_calmar = int(leaderboard.get("verified_calmar_similarity", pd.Series(dtype=bool)).astype(bool).sum()) if not leaderboard.empty else 0
+    verified_sharpe = int(leaderboard.get("verified_sharpe_robust", pd.Series(dtype=bool)).astype(bool).sum()) if not leaderboard.empty else 0
 
     final_summary = {
         **summary,
         "rows": int(len(leaderboard)),
         "verified_train_validation_5pct": verified_down_5pct,
         "verified_calmar_similarity": verified_calmar,
+        "verified_sharpe_robust": verified_sharpe,
         "unique_verified_train_validation_5pct": int(
             leaderboard.loc[leaderboard.get("verified_train_validation_5pct", pd.Series(dtype=bool)).astype(bool), "candidate_id"].nunique()
         ) if "candidate_id" in leaderboard and "verified_train_validation_5pct" in leaderboard else 0,
         "unique_verified_calmar_similarity": int(
             leaderboard.loc[leaderboard.get("verified_calmar_similarity", pd.Series(dtype=bool)).astype(bool), "candidate_id"].nunique()
         ) if "candidate_id" in leaderboard and "verified_calmar_similarity" in leaderboard else 0,
+        "unique_verified_sharpe_robust": int(
+            leaderboard.loc[leaderboard.get("verified_sharpe_robust", pd.Series(dtype=bool)).astype(bool), "candidate_id"].nunique()
+        ) if "candidate_id" in leaderboard and "verified_sharpe_robust" in leaderboard else 0,
         "best_candidate": str(leaderboard.iloc[0]["candidate_id"]) if not leaderboard.empty else None,
         "best_method": str(leaderboard.iloc[0].get("method", "")) if not leaderboard.empty else None,
         "best_train_score": float(leaderboard.iloc[0].get("weekly_multi_asset_score", 0.0)) if not leaderboard.empty else None,
         "best_train_calmar": float(leaderboard.iloc[0].get("train_calmar", 0.0)) if not leaderboard.empty else None,
         "best_validation_calmar": float(leaderboard.iloc[0].get("validation_calmar", 0.0)) if not leaderboard.empty else None,
+        "best_train_sharpe": float(leaderboard.iloc[0].get("train_sharpe", 0.0)) if not leaderboard.empty else None,
+        "best_validation_sharpe": float(leaderboard.iloc[0].get("validation_sharpe", 0.0)) if not leaderboard.empty else None,
         "best_verified_candidate": str(verified.iloc[0]["candidate_id"]) if not verified.empty else None,
         "jobs_started": _unique_stage_count(leaderboard),
         "jobs_completed": _unique_stage_count(leaderboard),
@@ -554,6 +652,46 @@ def _sobol_like_candidate(
 ) -> WeeklyMultiAssetCandidate:
     rng = np.random.default_rng(10_000_019 + stage * 1_000_003 + index * 9_176)
     return _random_candidate(catalog, assets, config=config, rng=rng)
+
+
+def _next_ml_candidates(
+    feature_names: list[str],
+    universes: list[tuple[str, ...]],
+    *,
+    config: MonthlyRiskSearchConfig,
+    rng: np.random.Generator,
+    stage: int,
+    iteration: int,
+) -> list[WeeklyMachineLearningCandidate]:
+    batch_size = min(max(24, min(256, config.seed_pool // 20 or 24)), max(1, int(config.seed_pool)))
+    models = ("ridge", "random_forest", "hist_gradient_boosting")
+    candidates: list[WeeklyMachineLearningCandidate] = []
+    max_features = max(1, min(config.max_features, len(feature_names)))
+    for index in range(batch_size):
+        model = models[(stage + iteration + index) % len(models)]
+        size = int(rng.integers(1, max_features + 1))
+        features = (
+            tuple(feature_names)
+            if len(feature_names) <= size
+            else tuple(sorted(rng.choice(feature_names, size=size, replace=False).tolist()))
+        )
+        universe = tuple(sorted(set(universes[int(rng.integers(0, len(universes)))])))
+        candidates.append(
+            WeeklyMachineLearningCandidate(
+                features=features,
+                assets=universe,
+                selector=str(rng.choice(WEEKLY_ASSET_SELECTORS)),
+                model=model,
+                alpha=float(rng.choice([0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0])),
+                n_estimators=int(rng.choice([32, 48, 64, 96])),
+                max_depth=int(rng.choice([2, 3, 4, 5])),
+                learning_rate=float(rng.choice([0.03, 0.05, 0.08, 0.12])),
+                scale=float(rng.uniform(0.35, 2.0)),
+                intercept=float(rng.uniform(-0.35, 0.35)),
+                random_seed=int(rng.integers(1, 2_000_000_000)),
+            )
+        )
+    return candidates
 
 
 def _run_optuna_real(
@@ -787,6 +925,13 @@ def _evaluate_and_stamp(
                 and bool(row.get("verified_calmar_similarity"))
             )
             row["verified_train_validation_5pct"] = False
+        elif score_mode == WEEKLY_MAX_SHARPE_SCORE_MODE:
+            row["verified_sharpe_robust"] = (
+                bool(row.get("accepted"))
+                and _has_expected_validation_counts(row)
+                and bool(row.get("verified_sharpe_robust"))
+            )
+            row["verified_train_validation_5pct"] = False
         else:
             row["verified_train_validation_5pct"] = bool(row.get("accepted")) and _has_expected_validation_counts(row) and bool(row.get("verified_train_validation_5pct"))
         row["locked_opened"] = False
@@ -802,7 +947,9 @@ def _trim_stage_rows(rows: list[dict[str, object]], top_rows: int) -> list[dict[
     verified = [
         row
         for row in sorted_rows
-        if bool(row.get("verified_train_validation_5pct")) or bool(row.get("verified_calmar_similarity"))
+        if bool(row.get("verified_train_validation_5pct"))
+        or bool(row.get("verified_calmar_similarity"))
+        or bool(row.get("verified_sharpe_robust"))
     ]
     top = sorted_rows[:top_rows]
     by_id = {str(row["candidate_id"]): row for row in [*top, *verified]}
@@ -813,6 +960,14 @@ def _strict_verified(rows: pd.DataFrame) -> pd.DataFrame:
     base = _verified(rows)
     if base.empty:
         return base
+    if "verified_sharpe_robust" in base and base["verified_sharpe_robust"].astype(bool).any():
+        mask = (
+            base["verified_sharpe_robust"].astype(bool)
+            & (pd.to_numeric(base["train_years_total"], errors="coerce") == EXPECTED_TRAIN_YEARS)
+            & (pd.to_numeric(base["validation_years_total"], errors="coerce") == EXPECTED_VALIDATION_YEARS)
+            & ~base["locked_opened"].astype(bool)
+        )
+        return base.loc[mask].copy()
     mask = (
         (pd.to_numeric(base["train_years_total"], errors="coerce") == EXPECTED_TRAIN_YEARS)
         & (pd.to_numeric(base["validation_years_total"], errors="coerce") == EXPECTED_VALIDATION_YEARS)
@@ -922,6 +1077,9 @@ def _stateful_method_summary(rows: pd.DataFrame, verified: pd.DataFrame) -> pd.D
                 "best_train_calmar": _best_float(group, "train_calmar"),
                 "best_validation_calmar": _best_float(method_verified, "validation_calmar"),
                 "best_validation_calmar_ratio_to_train": _best_float(method_verified, "validation_calmar_ratio_to_train"),
+                "best_train_sharpe": _best_float(group, "train_sharpe"),
+                "best_validation_sharpe": _best_float(method_verified, "validation_sharpe"),
+                "best_validation_sharpe_ratio_to_train": _best_float(method_verified, "validation_sharpe_ratio_to_train"),
             }
         )
     return pd.DataFrame(records)
@@ -995,6 +1153,7 @@ def _stage_summary(rows: list[dict[str, object]], *, method: str, wave: int, sta
         "accepted": int(sum(bool(row.get("accepted")) for row in rows)),
         "verified_train_validation_5pct": int(sum(bool(row.get("verified_train_validation_5pct")) for row in rows)),
         "verified_calmar_similarity": int(sum(bool(row.get("verified_calmar_similarity")) for row in rows)),
+        "verified_sharpe_robust": int(sum(bool(row.get("verified_sharpe_robust")) for row in rows)),
         "best_candidate": str(rows[0].get("candidate_id")) if rows else None,
         "locked_opened": False,
         "score_mode": str(rows[0].get("score_mode", "")) if rows else "",
@@ -1028,6 +1187,7 @@ def _stateful_method_offset(method: str) -> int:
         "smac_mf_real": 148_000,
         "beam": 149_000,
         "genetic": 157_000,
+        "machine_learning": 163_000,
     }.get(method, 0)
 
 

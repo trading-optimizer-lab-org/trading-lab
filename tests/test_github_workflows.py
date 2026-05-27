@@ -10,6 +10,65 @@ def test_public_data_optimization_workflow_is_manual_and_uploads_artifacts() -> 
     assert "leaderboard.csv" in text
 
 
+def test_weekly_sharpe_3methods_900_workflows_are_manual_balanced_and_mergeable() -> None:
+    main = Path(".github/workflows/weekly-sharpe-3methods-max-parallel-900.yml").read_text(encoding="utf-8")
+    block = Path(".github/workflows/weekly-sharpe-3methods-max-parallel-block.yml").read_text(encoding="utf-8")
+    merge = Path(".github/workflows/weekly-sharpe-3methods-max-parallel-900-merge-now.yml").read_text(encoding="utf-8")
+    config = Path("configs/weekly_sharpe_3methods_max_parallel_900.yaml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch" in main
+    assert "push:" not in main
+    assert "workflow_call" in block
+    assert "source_run_id" in merge
+    assert "block-a:" in main
+    assert "block-b:" in main
+    assert "block-c:" in main
+    assert "block-d:" in main
+    assert "stage_offset: 0" in main
+    assert "stage_offset: 75" in main
+    assert "stage_offset: 150" in main
+    assert "stage_offset: 225" in main
+    assert "max-parallel: 225" in block
+    assert "method: [beam, genetic, machine_learning]" in block
+    assert "--total-stages 300" in block
+    assert "--time-budget-minutes" in block
+    assert "weekly-sharpe-3methods-max-parallel-900-leaderboard" in main
+    assert "weekly-sharpe-3methods-max-parallel-900-leaderboard" in merge
+    assert "score_mode: train_sharpe_max_validation_80pct_report" in config
+    assert "jobs_total: 900" in config
+    assert "jobs_per_method: 300" in config
+    assert "jobs_per_block: 225" in config
+    assert "jobs_per_method_per_block: 75" in config
+    assert "locked_opened: false" in config
+
+
+def test_fair_ml_aurora_vs_github_30m_is_manual_paired_and_uploads_final_artifact() -> None:
+    text = Path(".github/workflows/fair-ml-aurora-vs-github-30m.yml").read_text(encoding="utf-8")
+    script = Path("scripts/fair_ml_aurora_vs_github.py").read_text(encoding="utf-8")
+    readme = Path("runs pendientes/fair_ml_aurora_vs_github_30m/README.md").read_text(encoding="utf-8")
+
+    assert "name: Fair ML Aurora vs GitHub 30m" in text
+    assert "workflow_dispatch" in text
+    assert "push:" not in text
+    assert "max-parallel: 2" in text
+    assert "track: normalized" in text
+    assert "order: aurora_first" in text
+    assert "order: github_first" in text
+    assert "repository: gomez5757/quantforge" in text
+    assert 'python -m pip install -e "quantforge[ml]"' in text
+    assert 'python -m pip install -e "trading-lab[hpo]"' in text
+    assert "fair_ml_aurora_vs_github.py run-pair" in text
+    assert "fair_ml_aurora_vs_github.py merge" in text
+    assert "fair-ml-aurora-vs-github-30m-results" in text
+    assert "timeout-minutes: 25" in text
+    assert "timeout-minutes: 5" in text
+    assert "track: native" not in text
+
+    assert "train_calmar" in script
+    assert "validation_calmar >= 0.80 * train_calmar" in readme
+    assert "locked_opened=false" in readme
+
+
 def test_survival_search_workflow_is_manual_and_never_mentions_locked_output() -> None:
     text = Path(".github/workflows/survival-search.yml").read_text(encoding="utf-8")
 

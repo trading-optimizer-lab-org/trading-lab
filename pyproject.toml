@@ -17,6 +17,7 @@ dev = [
 ]
 hpo = [
     "optuna>=4.3,<5",
+    "scikit-learn>=1.5,<2",
     "ConfigSpace>=1.2,<2",
     "smac>=2.2,<3",
     "dehb>=0.1,<1",
