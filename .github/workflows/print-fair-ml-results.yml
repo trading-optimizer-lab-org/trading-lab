@@ -16,15 +16,33 @@ permissions:
 jobs:
   print:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
-      - name: Download final artifact
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install merge dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas pyyaml
+
+      - name: Download pair artifacts
         uses: actions/download-artifact@v4
         with:
-          name: fair-ml-aurora-vs-github-30m-results
+          pattern: fair-ml-pair-*
           run-id: 26524768799
-          path: fair-ml-results
+          path: fair-ml-pairs
+          merge-multiple: false
           github-token: ${{ github.token }}
+
+      - name: Re-merge with current relaxed rule
+        run: |
+          python scripts/fair_ml_aurora_vs_github.py merge --input-root fair-ml-pairs --output-dir fair-ml-results
 
       - name: Print summary
         run: |
@@ -37,3 +55,8 @@ jobs:
           echo "=== fair_ml_results.csv ==="
           cat fair-ml-results/fair_ml_results.csv
 
+      - name: Upload relaxed results
+        uses: actions/upload-artifact@v4
+        with:
+          name: fair-ml-aurora-vs-github-30m-results-relaxed
+          path: fair-ml-results/

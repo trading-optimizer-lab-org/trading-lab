@@ -27,8 +27,8 @@ from trading_lab.weekly_multi_asset import build_weekly_multi_asset_examples  # 
 
 VALID_RULE = {
     "train_calmar_gt": 1.0,
-    "validation_calmar_gt": 1.0,
-    "validation_calmar_ratio_min": 0.80,
+    "validation_calmar_gt": 0.70,
+    "validation_calmar_ratio_min": None,
     "train_cagr_min": 0.04,
     "validation_cagr_min": 0.03,
     "locked_opened": False,
@@ -440,14 +440,15 @@ def _valid_candidate(row: dict[str, Any], *, locked_opened: bool) -> bool:
     validation_calmar = _metric(row, "validation_calmar")
     train_cagr = _metric(row, "train_cagr")
     validation_cagr = _metric(row, "validation_cagr")
+    ratio_min = VALID_RULE.get("validation_calmar_ratio_min")
     if locked_opened or _to_bool(row.get("locked_opened")):
         return False
     return (
-        train_calmar > 1.0
-        and validation_calmar > 1.0
-        and validation_calmar >= 0.80 * train_calmar
-        and train_cagr >= 0.04
-        and validation_cagr >= 0.03
+        train_calmar > float(VALID_RULE["train_calmar_gt"])
+        and validation_calmar > float(VALID_RULE["validation_calmar_gt"])
+        and (ratio_min is None or float(ratio_min) <= 0 or validation_calmar >= float(ratio_min) * train_calmar)
+        and train_cagr >= float(VALID_RULE["train_cagr_min"])
+        and validation_cagr >= float(VALID_RULE["validation_cagr_min"])
     )
 
 

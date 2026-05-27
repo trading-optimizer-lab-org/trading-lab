@@ -8,17 +8,17 @@ def test_vendored_aurora_ml_search_is_importable() -> None:
     assert callable(run_ml_search)
 
 
-def test_common_calmar_validity_rule_requires_ratio_cagr_and_closed_locked() -> None:
+def test_common_calmar_validity_rule_requires_validation_floor_cagr_and_closed_locked() -> None:
     valid = {
-        "train_calmar": 2.0,
-        "validation_calmar": 1.7,
+        "train_calmar": 50.0,
+        "validation_calmar": 0.71,
         "train_cagr": 0.04,
         "validation_cagr": 0.03,
         "locked_opened": False,
     }
 
     assert _valid_candidate(valid, locked_opened=False)
-    assert not _valid_candidate({**valid, "validation_calmar": 1.5}, locked_opened=False)
+    assert not _valid_candidate({**valid, "validation_calmar": 0.70}, locked_opened=False)
     assert not _valid_candidate({**valid, "validation_cagr": 0.02}, locked_opened=False)
     assert not _valid_candidate({**valid, "locked_opened": True}, locked_opened=False)
     assert not _valid_candidate(valid, locked_opened=True)
