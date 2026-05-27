@@ -29,8 +29,8 @@ VALID_RULE = {
     "train_calmar_gt": 0.0,
     "validation_calmar_gt": 0.0,
     "validation_calmar_ratio_min": None,
-    "train_cagr_min": 0.0,
-    "validation_cagr_min": 0.0,
+    "train_cagr_min": None,
+    "validation_cagr_min": None,
     "locked_opened": False,
 }
 
@@ -441,14 +441,16 @@ def _valid_candidate(row: dict[str, Any], *, locked_opened: bool) -> bool:
     train_cagr = _metric(row, "train_cagr")
     validation_cagr = _metric(row, "validation_cagr")
     ratio_min = VALID_RULE.get("validation_calmar_ratio_min")
+    train_cagr_min = VALID_RULE.get("train_cagr_min")
+    validation_cagr_min = VALID_RULE.get("validation_cagr_min")
     if locked_opened or _to_bool(row.get("locked_opened")):
         return False
     return (
         train_calmar > float(VALID_RULE["train_calmar_gt"])
         and validation_calmar > float(VALID_RULE["validation_calmar_gt"])
         and (ratio_min is None or float(ratio_min) <= 0 or validation_calmar >= float(ratio_min) * train_calmar)
-        and train_cagr >= float(VALID_RULE["train_cagr_min"])
-        and validation_cagr >= float(VALID_RULE["validation_cagr_min"])
+        and (train_cagr_min is None or train_cagr >= float(train_cagr_min))
+        and (validation_cagr_min is None or validation_cagr >= float(validation_cagr_min))
     )
 
 

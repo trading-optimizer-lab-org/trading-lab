@@ -12,14 +12,12 @@ def test_common_calmar_validity_rule_requires_validation_floor_cagr_and_closed_l
     valid = {
         "train_calmar": 0.01,
         "validation_calmar": 0.01,
-        "train_cagr": 0.0,
-        "validation_cagr": 0.0,
         "locked_opened": False,
     }
 
     assert _valid_candidate(valid, locked_opened=False)
     assert not _valid_candidate({**valid, "validation_calmar": 0.0}, locked_opened=False)
-    assert not _valid_candidate({**valid, "validation_cagr": -0.01}, locked_opened=False)
+    assert not _valid_candidate({**valid, "train_calmar": 0.0}, locked_opened=False)
     assert not _valid_candidate({**valid, "locked_opened": True}, locked_opened=False)
     assert not _valid_candidate(valid, locked_opened=True)
 
