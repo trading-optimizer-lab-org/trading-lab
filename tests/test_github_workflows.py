@@ -562,6 +562,37 @@ def test_weekly_github_ml_until_first_valid_stops_after_found() -> None:
     assert "push:" not in text
 
 
+def test_weekly_spy_sharpe_4methods_180_parallel_is_manual_balanced_and_locked_closed() -> None:
+    text = Path(".github/workflows/weekly-spy-sharpe-4methods-2h-fair-180-parallel.yml").read_text(encoding="utf-8")
+    config = Path("configs/weekly_spy_sharpe_4methods_180.yaml").read_text(encoding="utf-8")
+
+    assert "name: Weekly SPY Sharpe 4 Methods 2h Fair 180 Parallel" in text
+    assert "workflow_dispatch" in text
+    assert "push:" not in text
+    assert "max-parallel: 180" in text
+    assert "stage: [0, 1, 2" in text
+    assert "method: [beam, genetic, aurora_ml, github_ml]" in text
+    assert "--total-stages 45" in text
+    assert "--time-budget-minutes 100" in text
+    assert "timeout-minutes: 125" in text
+    assert "scripts/run_weekly_spy_sharpe_4methods_180_stage.py" in text
+    assert "scripts/merge_weekly_spy_sharpe_4methods_180.py" in text
+    assert "weekly-spy-sharpe-4methods-2h-fair-180-parallel-leaderboard" in text
+    assert "weekly_spy_sharpe_4methods_180_parallelism.json" in text
+
+    for method in ("beam", "genetic", "aurora_ml", "github_ml"):
+        assert method in text
+        assert f"  - {method}" in config
+    assert "jobs_per_method: 45" in config
+    assert "jobs_total: 180" in config
+    assert "max_parallel: 180" in config
+    assert "minutes_per_method_stage: 100" in config
+    assert "timeout_minutes_per_job: 125" in config
+    assert "score_mode: train_sharpe_max_validation_80pct_report" in config
+    assert "validation_role: report_only_for_score" in config
+    assert "locked_opened: false" in config
+
+
 def test_ci_is_manual_or_pull_request_only() -> None:
     text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 

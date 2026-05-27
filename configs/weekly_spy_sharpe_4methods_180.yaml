@@ -1,0 +1,41 @@
+data_path: data/public/spy_daily.csv
+output_dir: outputs/weekly_spy_sharpe_4methods_180
+start_year: 1994
+end_year: 2026
+train_start: "1994-01-01"
+train_end: "2007-12-31"
+validation_start: "2008-01-01"
+validation_end: "2019-12-31"
+locked_start: "2020-01-01"
+cash_return: 0.0
+max_abs_exposure: 1.0
+max_features: 8
+seed_pool: 5000
+beam_width: 160
+generations: 24
+mutations_per_parent: 36
+top_rows_per_stage: 500
+random_seed: 1201800
+minutes_per_method_stage: 100
+timeout_minutes_per_job: 125
+stages_per_method: 45
+jobs_per_method: 45
+jobs_total: 180
+max_parallel: 180
+score_mode: train_sharpe_max_validation_80pct_report
+validation_role: report_only_for_score
+locked_opened: false
+methods:
+  - beam
+  - genetic
+  - aurora_ml
+  - github_ml
+aurora_ml_models:
+  - logistic
+  - forest
+  - ridge
+  - corr
+github_ml_models:
+  - ridge
+  - random_forest
+  - hist_gradient_boosting
