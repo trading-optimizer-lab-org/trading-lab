@@ -305,8 +305,10 @@ def merge_results(args: argparse.Namespace) -> None:
     rows: list[dict[str, Any]] = []
     valid_candidates: list[dict[str, Any]] = []
     timing: list[dict[str, Any]] = []
-    for summary in pair_summaries:
-        for row in summary.get("results", []):
+    for path, summary in zip(pair_files, pair_summaries):
+        pair_root = path.parent
+        for original_row in summary.get("results", []):
+            row = _resummarize_pair_result(original_row, pair_root)
             rows.append(row)
             timing.append(
                 {
@@ -350,6 +352,51 @@ def merge_results(args: argparse.Namespace) -> None:
     (output_dir / "fair_ml_environment.json").write_text(
         json.dumps(final_summary["environment"], indent=2, sort_keys=True), encoding="utf-8"
     )
+
+
+def _resummarize_pair_result(row: dict[str, Any], pair_root: Path) -> dict[str, Any]:
+    engine = str(row.get("engine", ""))
+    try:
+        run_position = int(row.get("run_position", 0) or 0)
+    except (TypeError, ValueError):
+        run_position = 0
+    engine_dir = pair_root / f"{run_position:02d}_{engine}"
+    candidates: list[dict[str, Any]] = []
+    locked_opened = _to_bool(row.get("locked_opened"))
+    if engine == "aurora":
+        ml_dir = engine_dir / "runs" / "fair_ml_aurora" / "ml_search"
+        candidates = _read_aurora_candidates(ml_dir / "candidates.jsonl")
+        status = _read_json(ml_dir / "status.json")
+        locked_opened = locked_opened or _to_bool(status.get("locked_opened"))
+        raw_output_dir = str(ml_dir)
+    elif engine == "github_ml":
+        candidates = _read_csv_dicts(engine_dir / "fair_ml_github_leaderboard.csv")
+        locked_opened = locked_opened or any(_to_bool(candidate.get("locked_opened")) for candidate in candidates)
+        raw_output_dir = str(engine_dir)
+    else:
+        return row
+    if not candidates:
+        return row
+    refreshed = _summarize_candidates(
+        engine=engine,
+        candidates=candidates,
+        reported_evaluated=int(row.get("evaluated", len(candidates)) or len(candidates)),
+        effective_seconds=_to_float(row.get("effective_seconds"), _to_float(row.get("wall_seconds"), 0.0)),
+        wall_seconds=_to_float(row.get("wall_seconds"), 0.0),
+        exit_code=int(row.get("exit_code", 0) or 0),
+        engine_failed=_to_bool(row.get("engine_failed")),
+        objective_met=_to_bool(row.get("objective_met")),
+        locked_opened=locked_opened,
+        raw_output_dir=raw_output_dir,
+    )
+    refreshed.update(
+        {
+            "track": row.get("track"),
+            "order": row.get("order"),
+            "run_position": run_position,
+        }
+    )
+    return refreshed
 
 
 def _summarize_candidates(
