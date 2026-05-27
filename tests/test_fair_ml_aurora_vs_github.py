@@ -1,6 +1,13 @@
 from scripts.fair_ml_aurora_vs_github import _aggregate, _valid_candidate, _winner
 
 
+def test_vendored_aurora_ml_search_is_importable() -> None:
+    from aurora.research.ml_search import MLSearchConfig, run_ml_search
+
+    assert MLSearchConfig(run_id="smoke").no_locked is True
+    assert callable(run_ml_search)
+
+
 def test_common_calmar_validity_rule_requires_ratio_cagr_and_closed_locked() -> None:
     valid = {
         "train_calmar": 2.0,

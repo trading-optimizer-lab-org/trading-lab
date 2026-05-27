@@ -43,10 +43,11 @@ def main() -> int:
     run.add_argument("--order", required=True, choices=("aurora_first", "github_first"))
     run.add_argument("--seconds-per-engine", type=float, default=480.0)
     run.add_argument("--output-dir", required=True)
-    run.add_argument("--quantforge-dir", required=True)
+    run.add_argument("--quantforge-dir", default="")
     run.add_argument("--trading-lab-dir", default=str(ROOT))
     run.add_argument("--config", default="configs/weekly_sharpe_3methods_max_parallel_900.yaml")
     run.add_argument("--seed", type=int, default=20260527)
+    run.add_argument("--aurora-models", default="lightgbm,xgboost,logistic,forest,ridge,corr")
 
     merge = sub.add_parser("merge")
     merge.add_argument("--input-root", required=True)
@@ -67,7 +68,6 @@ def run_pair(args: argparse.Namespace) -> None:
     work_dir.mkdir(parents=True, exist_ok=True)
 
     trading_lab_dir = Path(args.trading_lab_dir).resolve()
-    quantforge_dir = Path(args.quantforge_dir).resolve()
     config_path = trading_lab_dir / args.config
     base_config = load_yaml(config_path)
     data_path = trading_lab_dir / base_config.get("data_path", "data/public/spy_daily.csv")
@@ -82,12 +82,12 @@ def run_pair(args: argparse.Namespace) -> None:
         run_config_path = work_dir / "normalized_config.yaml"
         run_config_path.write_text(yaml.safe_dump(run_config, sort_keys=False), encoding="utf-8")
         github_config = run_config_path
-        aurora_models = "lightgbm,xgboost,logistic,forest,ridge,corr"
+        aurora_models = str(args.aurora_models)
         github_total_stages = 1
     else:
         run_data = daily
         github_config = config_path
-        aurora_models = "lightgbm,xgboost,logistic,forest,ridge,corr"
+        aurora_models = str(args.aurora_models)
         github_total_stages = 1
 
     engines = ["aurora", "github_ml"] if args.order == "aurora_first" else ["github_ml", "aurora"]
@@ -98,7 +98,7 @@ def run_pair(args: argparse.Namespace) -> None:
         engine_dir.mkdir(parents=True, exist_ok=True)
         if engine == "aurora":
             result = _run_aurora(
-                quantforge_dir=quantforge_dir,
+                trading_lab_dir=trading_lab_dir,
                 daily=run_data,
                 output_dir=engine_dir,
                 seconds=float(args.seconds_per_engine),
@@ -146,7 +146,7 @@ def run_pair(args: argparse.Namespace) -> None:
 
 def _run_aurora(
     *,
-    quantforge_dir: Path,
+    trading_lab_dir: Path,
     daily: pd.DataFrame,
     output_dir: Path,
     seconds: float,
@@ -164,67 +164,54 @@ def _run_aurora(
         "\n".join(
             [
                 "from pathlib import Path",
+                "import json",
+                "from multiprocessing import freeze_support",
                 "import pandas as pd",
                 "from aurora.data_contracts.timeseries_store import TimeSeriesStore",
-                f"df = pd.read_csv(r'{daily_csv}', parse_dates=['timestamp']).set_index('timestamp')",
-                "store = TimeSeriesStore()",
-                "store.put('prices_daily', 'SPY', df, version='fair_ml_spy', replace=True)",
+                "from aurora.research.ml_search import MLSearchConfig, run_ml_search",
+                "",
+                "def main():",
+                f"    df = pd.read_csv(r'{daily_csv}', parse_dates=['timestamp']).set_index('timestamp')",
+                "    store = TimeSeriesStore()",
+                "    store.put('prices_daily', 'SPY', df, version='fair_ml_spy', replace=True)",
+                "    report = run_ml_search(",
+                "        MLSearchConfig(",
+                "            run_id='fair_ml_aurora',",
+                "            symbol='SPY',",
+                "            library='prices_daily',",
+                "            target_calmar=1,",
+                "            validation_target_calmar=1,",
+                "            workers=6,",
+                "            max_candidates=1000000,",
+                "            batch_size=12,",
+                f"            seed={int(seed)},",
+                f"            time_limit_seconds={max(1.0, seconds)!r},",
+                f"            models={tuple(model.strip() for model in models.split(',') if model.strip())!r},",
+                f"            run_root=r'{qf_run_root}',",
+                "            top_n=100,",
+                "            target_objective_count=999999,",
+                "            min_train_cagr=0.04,",
+                "            min_validation_cagr=0.03,",
+                "            max_train_validation_calmar_ratio=1.25,",
+                "            defer_robustness_until_basic_pass=True,",
+                "            no_costs=True,",
+                "            no_locked=True,",
+                "        )",
+                "    )",
+                "    print(json.dumps(report.to_dict(), default=str))",
+                "",
+                "if __name__ == '__main__':",
+                "    freeze_support()",
+                "    main()",
             ]
         ),
         encoding="utf-8",
     )
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(quantforge_dir)
+    env["PYTHONPATH"] = str(trading_lab_dir / "src")
     env["QF_DATA_DIR"] = str(qf_data)
-    _run_command([sys.executable, str(store_script)], cwd=quantforge_dir, env=env, log=output_dir / "aurora_store.log")
-
-    cmd = [
-        sys.executable,
-        "-m",
-        "aurora.cli.forge",
-        "research",
-        "ml-search",
-        "--run-id",
-        "fair_ml_aurora",
-        "--symbol",
-        "SPY",
-        "--library",
-        "prices_daily",
-        "--target-calmar",
-        "1",
-        "--validation-target-calmar",
-        "1",
-        "--workers",
-        "6",
-        "--max-candidates",
-        "1000000",
-        "--batch-size",
-        "120",
-        "--seed",
-        str(seed),
-        "--time-limit-seconds",
-        str(max(1.0, seconds)),
-        "--models",
-        models,
-        "--run-root",
-        str(qf_run_root),
-        "--top-n",
-        "100",
-        "--target-objective-count",
-        "999999",
-        "--min-train-cagr",
-        "0.04",
-        "--min-validation-cagr",
-        "0.03",
-        "--max-train-validation-calmar-ratio",
-        "1.25",
-        "--defer-robustness-until-basic-pass",
-        "--no-costs",
-        "--no-locked",
-        "--json",
-    ]
     started = time.perf_counter()
-    proc = _run_command(cmd, cwd=quantforge_dir, env=env, log=output_dir / "aurora_ml.log", check=False)
+    proc = _run_command([sys.executable, str(store_script)], cwd=trading_lab_dir, env=env, log=output_dir / "aurora_ml.log", check=False)
     wall_seconds = time.perf_counter() - started
     ml_dir = qf_run_root / "fair_ml_aurora" / "ml_search"
     candidates = _read_aurora_candidates(ml_dir / "candidates.jsonl")

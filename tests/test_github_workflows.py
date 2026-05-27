@@ -56,8 +56,8 @@ def test_fair_ml_aurora_vs_github_30m_is_manual_paired_and_uploads_final_artifac
     assert "track: normalized" in text
     assert "order: aurora_first" in text
     assert "order: github_first" in text
-    assert "repository: gomez5757/quantforge" in text
-    assert 'python -m pip install -e "quantforge[ml]"' in text
+    assert "repository: gomez5757/quantforge" not in text
+    assert 'python -m pip install -e "quantforge[ml]"' not in text
     assert 'python -m pip install -e "trading-lab[hpo]"' in text
     assert "fair_ml_aurora_vs_github.py run-pair" in text
     assert "fair_ml_aurora_vs_github.py merge" in text
