@@ -25,6 +25,8 @@ from trading_lab.monthly_risk import (
 
 
 MIN_DOWN_YEAR_RETURN = 0.05
+WEEKLY_DOWN_5PCT_SCORE_MODE = "train_only_weekly_sp500_down_5pct"
+WEEKLY_MAX_CALMAR_SCORE_MODE = "train_calmar_max_validation_80pct_report"
 WEEKLY_ASSET_SELECTORS = ("momentum_4w", "momentum_13w", "momentum_26w", "momentum_52w", "low_vol_13w")
 WEEKLY_METHODS = ("random_broad", "beam", "genetic", "bayesian_like", "bandit")
 
@@ -110,6 +112,7 @@ def evaluate_weekly_multi_asset_candidate(
     candidate: WeeklyMultiAssetCandidate,
     *,
     method: str,
+    score_mode: str = WEEKLY_DOWN_5PCT_SCORE_MODE,
 ) -> tuple[dict[str, object], pd.DataFrame, pd.DataFrame]:
     usable = _without_locked_weekly(examples)
     exposure_candidate = MonthlyRiskCandidate(
@@ -198,16 +201,28 @@ def evaluate_weekly_multi_asset_candidate(
         "locked_opened": False,
         "locked_weeks": 0,
         "validation_role": "report_only",
-        "score_mode": "train_only_weekly_sp500_down_5pct",
+        "score_mode": score_mode,
         "accepted": False,
         "verified_train_validation_5pct": False,
+        "train_calmar_gt_1": False,
+        "validation_calmar_gt_1": False,
+        "validation_calmar_ratio_to_train": np.nan,
+        "validation_calmar_ge_80pct_train": False,
+        "verified_calmar_similarity": False,
         "rejection_reason": "",
         "weekly_multi_asset_score": 0.0,
     }
-    row["rejection_reason"] = _rejection_reason(row)
-    row["accepted"] = row["rejection_reason"] == ""
-    row["verified_train_validation_5pct"] = _is_verified(row)
-    row["weekly_multi_asset_score"] = _weekly_score(row)
+    if score_mode == WEEKLY_MAX_CALMAR_SCORE_MODE:
+        _stamp_calmar_verification(row)
+        row["rejection_reason"] = _calmar_rejection_reason(row)
+        row["accepted"] = row["rejection_reason"] == ""
+        row["verified_train_validation_5pct"] = False
+        row["weekly_multi_asset_score"] = _weekly_calmar_score(row)
+    else:
+        row["rejection_reason"] = _rejection_reason(row)
+        row["accepted"] = row["rejection_reason"] == ""
+        row["verified_train_validation_5pct"] = _is_verified(row)
+        row["weekly_multi_asset_score"] = _weekly_score(row)
     return row, positions, year_by_year
 
 
@@ -388,7 +403,7 @@ def _run_random_broad(
 ) -> list[dict[str, object]]:
     candidates = _seed_candidates(catalog, assets, config=config, rng=rng, method="random_broad")
     extra = [_random_candidate(catalog, assets, config=config, rng=rng) for _ in range(config.seed_pool)]
-    return _evaluate_unique(examples, [*candidates, *extra], seen, method="random_broad")
+    return _evaluate_unique(examples, [*candidates, *extra], seen, method="random_broad", score_mode=config.score_mode)
 
 
 def _run_beam(
@@ -402,7 +417,13 @@ def _run_beam(
     method: str,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
-    seed_rows = _evaluate_unique(examples, _seed_candidates(catalog, assets, config=config, rng=rng, method=method), seen, method=method)
+    seed_rows = _evaluate_unique(
+        examples,
+        _seed_candidates(catalog, assets, config=config, rng=rng, method=method),
+        seen,
+        method=method,
+        score_mode=config.score_mode,
+    )
     rows.extend(seed_rows)
     beam = _select_beam(seed_rows, config.beam_width)
     for _ in range(config.generations):
@@ -411,7 +432,7 @@ def _run_beam(
             candidate = _candidate_from_row(parent)
             for _ in range(config.mutations_per_parent):
                 children.append(_mutate_candidate(candidate, catalog, assets, config=config, rng=rng))
-        child_rows = _evaluate_unique(examples, children, seen, method=method)
+        child_rows = _evaluate_unique(examples, children, seen, method=method, score_mode=config.score_mode)
         rows.extend(child_rows)
         beam = _select_beam([*beam, *child_rows], config.beam_width)
     return rows
@@ -426,7 +447,13 @@ def _run_genetic(
     rng: np.random.Generator,
     seen: set[tuple[tuple[str, ...], tuple[str, ...], str, float, float, float]],
 ) -> list[dict[str, object]]:
-    rows = _evaluate_unique(examples, _seed_candidates(catalog, assets, config=config, rng=rng, method="genetic"), seen, method="genetic")
+    rows = _evaluate_unique(
+        examples,
+        _seed_candidates(catalog, assets, config=config, rng=rng, method="genetic"),
+        seen,
+        method="genetic",
+        score_mode=config.score_mode,
+    )
     population = _select_beam(rows, max(config.beam_width, 20))
     for _ in range(config.generations):
         parents = [_candidate_from_row(row) for row in population]
@@ -435,7 +462,7 @@ def _run_genetic(
             left = parents[int(rng.integers(0, len(parents)))]
             right = parents[int(rng.integers(0, len(parents)))]
             children.append(_mutate_candidate(_crossover(left, right, rng), catalog, assets, config=config, rng=rng))
-        child_rows = _evaluate_unique(examples, children, seen, method="genetic")
+        child_rows = _evaluate_unique(examples, children, seen, method="genetic", score_mode=config.score_mode)
         rows.extend(child_rows)
         population = _select_beam([*population, *child_rows], max(config.beam_width, 20))
     return rows
@@ -450,11 +477,17 @@ def _run_bayesian_like(
     rng: np.random.Generator,
     seen: set[tuple[tuple[str, ...], tuple[str, ...], str, float, float, float]],
 ) -> list[dict[str, object]]:
-    rows = _evaluate_unique(examples, _seed_candidates(catalog, assets, config=config, rng=rng, method="bayesian_like"), seen, method="bayesian_like")
+    rows = _evaluate_unique(
+        examples,
+        _seed_candidates(catalog, assets, config=config, rng=rng, method="bayesian_like"),
+        seen,
+        method="bayesian_like",
+        score_mode=config.score_mode,
+    )
     for _ in range(config.generations):
         weights = _spec_weights_from_rows(rows, catalog)
         candidates = [_weighted_candidate(catalog, weights, assets, config=config, rng=rng) for _ in range(config.beam_width * config.mutations_per_parent)]
-        child_rows = _evaluate_unique(examples, candidates, seen, method="bayesian_like")
+        child_rows = _evaluate_unique(examples, candidates, seen, method="bayesian_like", score_mode=config.score_mode)
         rows.extend(child_rows)
     return rows
 
@@ -477,7 +510,7 @@ def _run_bandit(
             group = _choose_group(rewards, rng)
             group_catalog = groups.get(group, catalog) or catalog
             candidates.append(_random_candidate(group_catalog, assets, config=config, rng=rng))
-        rows.extend(_evaluate_unique(examples, candidates, seen, method="bandit"))
+        rows.extend(_evaluate_unique(examples, candidates, seen, method="bandit", score_mode=config.score_mode))
     return rows
 
 
@@ -745,6 +778,7 @@ def _evaluate_unique(
     seen: set[tuple[tuple[str, ...], tuple[str, ...], str, float, float, float]],
     *,
     method: str,
+    score_mode: str = WEEKLY_DOWN_5PCT_SCORE_MODE,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for candidate in candidates:
@@ -759,7 +793,7 @@ def _evaluate_unique(
         if key in seen:
             continue
         seen.add(key)
-        row, _, _ = evaluate_weekly_multi_asset_candidate(examples, candidate, method=method)
+        row, _, _ = evaluate_weekly_multi_asset_candidate(examples, candidate, method=method, score_mode=score_mode)
         rows.append(row)
     return rows
 
@@ -963,6 +997,57 @@ def _is_verified(row: dict[str, object]) -> bool:
     )
 
 
+def _stamp_calmar_verification(row: dict[str, object]) -> None:
+    train_calmar = _finite_float(row.get("train_calmar"), default=-1.0)
+    validation_calmar = _finite_float(row.get("validation_calmar"), default=-1.0)
+    ratio = float("nan")
+    if np.isfinite(train_calmar) and train_calmar > 0.0 and np.isfinite(validation_calmar):
+        ratio = float(validation_calmar / train_calmar)
+    row["train_calmar_gt_1"] = bool(np.isfinite(train_calmar) and train_calmar > 1.0)
+    row["validation_calmar_gt_1"] = bool(np.isfinite(validation_calmar) and validation_calmar > 1.0)
+    row["validation_calmar_ratio_to_train"] = ratio
+    row["validation_calmar_ge_80pct_train"] = bool(np.isfinite(ratio) and ratio >= 0.80)
+    row["verified_calmar_similarity"] = bool(
+        row["train_calmar_gt_1"]
+        and row["validation_calmar_gt_1"]
+        and row["validation_calmar_ge_80pct_train"]
+        and not bool(row.get("locked_opened"))
+    )
+
+
+def _calmar_rejection_reason(row: dict[str, object]) -> str:
+    if int(row.get("train_years_total", 0) or 0) == 0:
+        return "no_train_years"
+    train_calmar = _finite_float(row.get("train_calmar"), default=-1.0)
+    if not np.isfinite(train_calmar) or train_calmar <= 1.0:
+        return "train_calmar_below_or_equal_1"
+    return ""
+
+
+def _weekly_calmar_score(row: dict[str, object]) -> float:
+    train_calmar = _finite_float(row.get("train_calmar"), default=-1_000_000.0)
+    train_cagr = _finite_float(row.get("train_cagr"), default=-1.0)
+    train_mdd = _finite_float(row.get("train_mdd"), default=-1.0)
+    train_min = _finite_float(row.get("train_min_year_return"), default=-1.0)
+    feature_count = int(row.get("feature_count", 0) or 0)
+    calmar = min(train_calmar, 1_000_000.0) if np.isfinite(train_calmar) else -1_000_000.0
+    return float(
+        calmar * 1_000_000.0
+        + train_cagr * 100_000.0
+        + train_min * 10_000.0
+        - abs(train_mdd) * 1_000.0
+        - max(0, feature_count - 5) * 10.0
+    )
+
+
+def _finite_float(value: object, *, default: float = 0.0) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return default
+    return out if np.isfinite(out) else default
+
+
 def _weekly_score(row: dict[str, object]) -> float:
     train_down_total = max(1, int(row.get("train_down_years_total", 0) or 0))
     train_years_total = max(1, int(row.get("train_years_total", 0) or 0))
@@ -996,6 +1081,10 @@ def _weekly_score(row: dict[str, object]) -> float:
 def _verified(rows: pd.DataFrame) -> pd.DataFrame:
     if rows.empty:
         return rows.copy()
+    if "verified_calmar_similarity" in rows:
+        calmar_mask = rows["verified_calmar_similarity"].astype(bool)
+        if calmar_mask.any():
+            return rows.loc[calmar_mask].sort_values("weekly_multi_asset_score", ascending=False).copy()
     required = {
         "accepted",
         "validation_years_positive",

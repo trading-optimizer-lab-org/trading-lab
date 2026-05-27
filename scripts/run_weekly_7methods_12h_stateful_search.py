@@ -68,6 +68,7 @@ def main() -> int:
             max_features=int(args.max_features or raw_config.get("max_features", 8)),
             random_seed=int(args.random_seed or raw_config.get("random_seed", 817_000)),
             top_rows_per_stage=int(args.top_rows_per_stage),
+            score_mode=str(raw_config.get("score_mode", "train_only_weekly_sp500_down_5pct")),
         )
         rows, state = run_stateful_weekly_search(
             examples,

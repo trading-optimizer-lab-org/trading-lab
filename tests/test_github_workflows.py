@@ -367,6 +367,33 @@ def test_weekly_7methods_5h_fair_workflow_runs_one_balanced_wave_from_zero() -> 
     assert "locked_opened: false" in config
 
 
+def test_weekly_beam_genetic_2h_max_calmar_is_manual_balanced_and_locked_closed() -> None:
+    text = Path(".github/workflows/weekly-beam-genetic-2h-max-calmar.yml").read_text(encoding="utf-8")
+    config = Path("configs/weekly_beam_genetic_2h_max_calmar.yaml").read_text(encoding="utf-8")
+
+    assert "name: Weekly Beam Genetic 2h Max Calmar" in text
+    assert "workflow_dispatch" in text
+    assert "push:" not in text
+    assert "max-parallel: 200" in text
+    assert "stage: [0, 1, 2" in text
+    assert "method: [beam, genetic]" in text
+    assert "--total-stages 100" in text
+    assert "--time-budget-minutes 95" in text
+    assert "--file-prefix \"$FILE_PREFIX\"" in text
+    assert "scripts/audit_weekly_feature_catalog.py" in text
+    assert "weekly-beam-genetic-2h-max-calmar-leaderboard" in text
+    assert "weekly_beam_genetic_2h_max_calmar_leaderboard.csv" in text
+    assert "weekly_beam_genetic_2h_feature_catalog.csv" in text
+    assert "score_mode: train_calmar_max_validation_80pct_report" in config
+    assert "methods:\n  - beam\n  - genetic" in config
+    assert "stages_per_method: 100" in config
+    assert "jobs_per_method: 100" in config
+    assert "jobs_total: 200" in config
+    assert "max_parallel: 200" in config
+    assert "validation_role: report_only_for_score" in config
+    assert "locked_opened: false" in config
+
+
 def test_github_actions_unblock_smoke_is_manual_single_checkout_job() -> None:
     text = Path(".github/workflows/github-actions-unblock-smoke.yml").read_text(encoding="utf-8")
 

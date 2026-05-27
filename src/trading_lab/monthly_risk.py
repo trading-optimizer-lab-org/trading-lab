@@ -38,6 +38,7 @@ class MonthlyRiskSearchConfig:
     max_features: int = 6
     random_seed: int = 412_000
     top_rows_per_stage: int = 250
+    score_mode: str = "train_only_weekly_sp500_down_5pct"
 
 
 def build_monthly_examples(

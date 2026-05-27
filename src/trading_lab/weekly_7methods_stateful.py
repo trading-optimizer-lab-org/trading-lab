@@ -113,13 +113,33 @@ def run_stateful_weekly_search(
     iteration = 0
 
     if prior_candidates:
-        rows.extend(_evaluate_and_stamp(examples, prior_candidates, seen, method=method, wave=wave, stage=stage, start=start))
+        rows.extend(
+            _evaluate_and_stamp(
+                examples,
+                prior_candidates,
+                seen,
+                method=method,
+                wave=wave,
+                stage=stage,
+                start=start,
+                score_mode=config.score_mode,
+            )
+        )
 
     while time.monotonic() < deadline or iteration == 0:
         candidates = _next_candidates(engine_method, catalog, assets, config=config, rng=rng, rows=rows, prior=prior_candidates, iteration=iteration)
         if not candidates:
             break
-        child_rows = _evaluate_and_stamp(examples, candidates, seen, method=method, wave=wave, stage=stage, start=start)
+        child_rows = _evaluate_and_stamp(
+            examples,
+            candidates,
+            seen,
+            method=method,
+            wave=wave,
+            stage=stage,
+            start=start,
+            score_mode=config.score_mode,
+        )
         rows.extend(child_rows)
         iteration += 1
         if time_budget_minutes <= 0:
@@ -152,7 +172,16 @@ def run_real_hpo_weekly_search(
     deadline = start + max(1.0, float(time_budget_minutes) * 60.0)
 
     def evaluate(candidate: WeeklyMultiAssetCandidate, *, backend: str) -> float:
-        stamped = _evaluate_and_stamp(examples, [candidate], seen, method=method, wave=wave, stage=stage, start=start)
+        stamped = _evaluate_and_stamp(
+            examples,
+            [candidate],
+            seen,
+            method=method,
+            wave=wave,
+            stage=stage,
+            start=start,
+            score_mode=config.score_mode,
+        )
         for row in stamped:
             row["hpo_backend"] = backend
             row["method_real"] = True
@@ -320,15 +349,26 @@ def merge_stateful_weekly_leaderboards(
     efficiency = _stateful_efficiency(leaderboard, verified)
     efficiency.to_csv(output / f"{file_prefix}_efficiency.csv", index=False)
     method_list = list(expected_methods if expected_methods is not None else STATEFUL_WEEKLY_METHODS)
+    score_mode = str(leaderboard.iloc[0].get("score_mode", summary.get("score_mode", ""))) if not leaderboard.empty else str(summary.get("score_mode", ""))
+    verified_down_5pct = int(leaderboard.get("verified_train_validation_5pct", pd.Series(dtype=bool)).astype(bool).sum()) if not leaderboard.empty else 0
+    verified_calmar = int(leaderboard.get("verified_calmar_similarity", pd.Series(dtype=bool)).astype(bool).sum()) if not leaderboard.empty else 0
 
     final_summary = {
         **summary,
         "rows": int(len(leaderboard)),
-        "verified_train_validation_5pct": int(len(verified)),
-        "unique_verified_train_validation_5pct": int(verified["candidate_id"].nunique()) if "candidate_id" in verified else 0,
+        "verified_train_validation_5pct": verified_down_5pct,
+        "verified_calmar_similarity": verified_calmar,
+        "unique_verified_train_validation_5pct": int(
+            leaderboard.loc[leaderboard.get("verified_train_validation_5pct", pd.Series(dtype=bool)).astype(bool), "candidate_id"].nunique()
+        ) if "candidate_id" in leaderboard and "verified_train_validation_5pct" in leaderboard else 0,
+        "unique_verified_calmar_similarity": int(
+            leaderboard.loc[leaderboard.get("verified_calmar_similarity", pd.Series(dtype=bool)).astype(bool), "candidate_id"].nunique()
+        ) if "candidate_id" in leaderboard and "verified_calmar_similarity" in leaderboard else 0,
         "best_candidate": str(leaderboard.iloc[0]["candidate_id"]) if not leaderboard.empty else None,
         "best_method": str(leaderboard.iloc[0].get("method", "")) if not leaderboard.empty else None,
         "best_train_score": float(leaderboard.iloc[0].get("weekly_multi_asset_score", 0.0)) if not leaderboard.empty else None,
+        "best_train_calmar": float(leaderboard.iloc[0].get("train_calmar", 0.0)) if not leaderboard.empty else None,
+        "best_validation_calmar": float(leaderboard.iloc[0].get("validation_calmar", 0.0)) if not leaderboard.empty else None,
         "best_verified_candidate": str(verified.iloc[0]["candidate_id"]) if not verified.empty else None,
         "jobs_started": _unique_stage_count(leaderboard),
         "jobs_completed": _unique_stage_count(leaderboard),
@@ -336,6 +376,7 @@ def merge_stateful_weekly_leaderboards(
         "partial": False,
         "locked_opened": False,
         "validation_role": "report_only",
+        "score_mode": score_mode,
         "methods": method_list,
         "expected_train_years": EXPECTED_TRAIN_YEARS,
         "expected_validation_years": EXPECTED_VALIDATION_YEARS,
@@ -725,8 +766,9 @@ def _evaluate_and_stamp(
     wave: int,
     stage: int,
     start: float,
+    score_mode: str = "train_only_weekly_sp500_down_5pct",
 ) -> list[dict[str, object]]:
-    rows = _evaluate_unique(examples, candidates, seen, method=method)
+    rows = _evaluate_unique(examples, candidates, seen, method=method, score_mode=score_mode)
     stamped = []
     for index, row in enumerate(rows, start=1):
         elapsed = max(0.0, time.monotonic() - start)
@@ -738,7 +780,15 @@ def _evaluate_and_stamp(
         row["first_seen_wave"] = int(wave)
         row["first_seen_minute"] = float(elapsed / 60.0)
         row["accepted"] = bool(row.get("accepted")) and _has_expected_train_counts(row)
-        row["verified_train_validation_5pct"] = bool(row.get("accepted")) and _has_expected_validation_counts(row) and bool(row.get("verified_train_validation_5pct"))
+        if score_mode == "train_calmar_max_validation_80pct_report":
+            row["verified_calmar_similarity"] = (
+                bool(row.get("accepted"))
+                and _has_expected_validation_counts(row)
+                and bool(row.get("verified_calmar_similarity"))
+            )
+            row["verified_train_validation_5pct"] = False
+        else:
+            row["verified_train_validation_5pct"] = bool(row.get("accepted")) and _has_expected_validation_counts(row) and bool(row.get("verified_train_validation_5pct"))
         row["locked_opened"] = False
         row["validation_role"] = "report_only"
         stamped.append(row)
@@ -749,7 +799,11 @@ def _trim_stage_rows(rows: list[dict[str, object]], top_rows: int) -> list[dict[
     sorted_rows = sorted(rows, key=lambda row: float(row.get("weekly_multi_asset_score", 0.0) or 0.0), reverse=True)
     if top_rows <= 0:
         return sorted_rows
-    verified = [row for row in sorted_rows if bool(row.get("verified_train_validation_5pct"))]
+    verified = [
+        row
+        for row in sorted_rows
+        if bool(row.get("verified_train_validation_5pct")) or bool(row.get("verified_calmar_similarity"))
+    ]
     top = sorted_rows[:top_rows]
     by_id = {str(row["candidate_id"]): row for row in [*top, *verified]}
     return sorted(by_id.values(), key=lambda row: float(row.get("weekly_multi_asset_score", 0.0) or 0.0), reverse=True)
@@ -865,6 +919,9 @@ def _stateful_method_summary(rows: pd.DataFrame, verified: pd.DataFrame) -> pd.D
                 "best_validation_down_min_return": _best_float(method_verified, "validation_down_min_return"),
                 "best_validation_cagr": _best_float(method_verified, "validation_cagr"),
                 "best_validation_mdd": _best_float(method_verified, "validation_mdd", highest=False),
+                "best_train_calmar": _best_float(group, "train_calmar"),
+                "best_validation_calmar": _best_float(method_verified, "validation_calmar"),
+                "best_validation_calmar_ratio_to_train": _best_float(method_verified, "validation_calmar_ratio_to_train"),
             }
         )
     return pd.DataFrame(records)
@@ -937,8 +994,10 @@ def _stage_summary(rows: list[dict[str, object]], *, method: str, wave: int, sta
         "rows": int(len(rows)),
         "accepted": int(sum(bool(row.get("accepted")) for row in rows)),
         "verified_train_validation_5pct": int(sum(bool(row.get("verified_train_validation_5pct")) for row in rows)),
+        "verified_calmar_similarity": int(sum(bool(row.get("verified_calmar_similarity")) for row in rows)),
         "best_candidate": str(rows[0].get("candidate_id")) if rows else None,
         "locked_opened": False,
+        "score_mode": str(rows[0].get("score_mode", "")) if rows else "",
         "validation_role": "report_only",
     }
 

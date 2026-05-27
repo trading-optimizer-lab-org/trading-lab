@@ -65,6 +65,7 @@ def main() -> int:
             max_features=int(args.max_features or raw_config.get("max_features", 8)),
             random_seed=int(args.random_seed or raw_config.get("random_seed", 817_000)),
             top_rows_per_stage=int(args.top_rows_per_stage or raw_config.get("top_rows_per_stage", 1200)),
+            score_mode=str(raw_config.get("score_mode", "train_only_weekly_sp500_down_5pct")),
         )
         rows = run_weekly_multi_asset_search(examples, config, method=args.method)
         write_weekly_multi_asset_outputs(rows, examples, output_dir, method=args.method, stage=args.stage)

@@ -13,6 +13,7 @@ from trading_lab.weekly_7methods_stateful import (
     _strict_verified,
     merge_state_files,
 )
+from trading_lab.weekly_multi_asset import _weekly_calmar_score
 from scripts.merge_weekly_7methods_overnight import _partial_summary
 
 
@@ -47,6 +48,62 @@ def test_strict_verified_requires_exact_train_validation_counts() -> None:
     verified = _strict_verified(rows)
 
     assert verified["candidate_id"].tolist() == ["ok"]
+
+
+def test_strict_verified_accepts_calmar_similarity_mode() -> None:
+    rows = pd.DataFrame(
+        [
+            _verified_row(
+                candidate_id="ok_calmar",
+                score_mode="train_calmar_max_validation_80pct_report",
+                accepted=True,
+                train_calmar=2.0,
+                validation_calmar=1.7,
+                train_calmar_gt_1=True,
+                validation_calmar_gt_1=True,
+                validation_calmar_ratio_to_train=0.85,
+                validation_calmar_ge_80pct_train=True,
+                verified_calmar_similarity=True,
+                verified_train_validation_5pct=False,
+            ),
+            _verified_row(
+                candidate_id="bad_ratio",
+                score_mode="train_calmar_max_validation_80pct_report",
+                accepted=True,
+                train_calmar=2.0,
+                validation_calmar=1.5,
+                train_calmar_gt_1=True,
+                validation_calmar_gt_1=True,
+                validation_calmar_ratio_to_train=0.75,
+                validation_calmar_ge_80pct_train=False,
+                verified_calmar_similarity=False,
+                verified_train_validation_5pct=False,
+            ),
+        ]
+    )
+
+    verified = _strict_verified(rows)
+
+    assert verified["candidate_id"].tolist() == ["ok_calmar"]
+
+
+def test_weekly_calmar_score_prioritizes_train_calmar_before_tiebreakers() -> None:
+    low_calmar_high_cagr = {
+        "train_calmar": 1.5,
+        "train_cagr": 0.40,
+        "train_mdd": -0.10,
+        "train_min_year_return": 0.10,
+        "feature_count": 3,
+    }
+    high_calmar_low_cagr = {
+        "train_calmar": 2.0,
+        "train_cagr": 0.05,
+        "train_mdd": -0.25,
+        "train_min_year_return": 0.02,
+        "feature_count": 8,
+    }
+
+    assert _weekly_calmar_score(high_calmar_low_cagr) > _weekly_calmar_score(low_calmar_high_cagr)
 
 
 def test_5h_public_methods_map_to_existing_engines() -> None:
