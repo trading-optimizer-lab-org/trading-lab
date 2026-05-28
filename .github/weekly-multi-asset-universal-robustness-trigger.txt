@@ -1,1 +1,1 @@
-launch 2026-05-28 weekly multi asset universal robustness bootstrap 100 chunks 64
+launch 2026-05-28T19:30:00+02:00 weekly multi asset universal robustness bootstrap 100 chunks 64 scipy fixed
