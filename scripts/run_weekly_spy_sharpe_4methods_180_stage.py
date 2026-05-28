@@ -105,7 +105,17 @@ def _run_aurora_stage(daily: pd.DataFrame, raw_config: dict[str, Any], args: arg
     os.environ["QF_DATA_DIR"] = str(qf_data)
     train_start = pd.Timestamp(str(raw_config.get("train_start", "1994-01-01")))
     daily = daily.loc[daily.index >= train_start].copy()
-    TimeSeriesStore().put("prices_daily", "SPY", daily, version=f"spy_sharpe_stage_{args.stage}", replace=True)
+    price_frame, pending_features = _aurora_price_and_pending_frames(daily)
+    store = TimeSeriesStore()
+    store.put("prices_daily", "SPY", price_frame, version=f"spy_sharpe_stage_{args.stage}", replace=True)
+    store.put(
+        "features_pending_daily",
+        "SPY",
+        pending_features,
+        version="pending_features_v1",
+        metadata={"source": "weekly_multi_asset_public_panel", "locked_opened": False},
+        replace=True,
+    )
     models = tuple(str(item) for item in raw_config.get("aurora_ml_models", ["logistic", "forest", "ridge", "corr"]))
     report = run_ml_search(
         MLSearchConfig(
@@ -125,6 +135,7 @@ def _run_aurora_stage(daily: pd.DataFrame, raw_config: dict[str, Any], args: arg
             time_limit_seconds=max(1.0, float(args.time_budget_minutes) * 60.0),
             models=models,
             run_root=str(run_root),
+            include_pending_features=True,
             top_n=max(int(args.top_rows_per_stage), 500),
             target_objective_count=999999,
             min_train_cagr=None,
@@ -144,11 +155,31 @@ def _run_aurora_stage(daily: pd.DataFrame, raw_config: dict[str, Any], args: arg
     return rows[: int(args.top_rows_per_stage)]
 
 
+def _aurora_price_and_pending_frames(daily: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    price_columns = [column for column in ("open", "high", "low", "close", "adj_close", "volume") if column in daily.columns]
+    price_frame = daily[price_columns].copy()
+    pending = daily.drop(columns=price_columns, errors="ignore").copy()
+    if pending.empty:
+        pending = pd.DataFrame({"panel_marker": 1.0}, index=daily.index)
+    for column in pending.columns:
+        pending[column] = pd.to_numeric(pending[column], errors="coerce")
+    pending = pending.replace([float("inf"), float("-inf")], float("nan"))
+    return price_frame, pending
+
+
 def _aurora_candidate_to_row(candidate: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     train = candidate.get("train_metrics") or {}
     validation = candidate.get("validation_metrics") or {}
+    train_metric_source = "sharpe"
+    validation_metric_source = "sharpe"
     train_sharpe = _to_float(train.get("sharpe"))
     validation_sharpe = _to_float(validation.get("sharpe"))
+    if not _is_finite(train_sharpe):
+        train_sharpe = _to_float(train.get("calmar"))
+        train_metric_source = "calmar_proxy"
+    if not _is_finite(validation_sharpe):
+        validation_sharpe = _to_float(validation.get("calmar"))
+        validation_metric_source = "calmar_proxy"
     train_cagr = _to_float(train.get("cagr")) / 100.0
     validation_cagr = _to_float(validation.get("cagr")) / 100.0
     train_mdd = _to_float(train.get("mdd")) / 100.0
@@ -156,6 +187,7 @@ def _aurora_candidate_to_row(candidate: dict[str, Any], args: argparse.Namespace
     feature_set = candidate.get("feature_set") or []
     ratio = validation_sharpe / train_sharpe if train_sharpe > 0 else float("nan")
     score = train_sharpe * 1_000_000.0 + train_cagr * 100_000.0 - abs(train_mdd) * 1_000.0 - max(0, len(feature_set) - 5) * 10.0
+    comparable_sharpe = train_metric_source == "sharpe" and validation_metric_source == "sharpe"
     return {
         "candidate_id": f"aurora_{candidate.get('candidate_id', '')}",
         "method": "aurora_ml",
@@ -173,10 +205,12 @@ def _aurora_candidate_to_row(candidate: dict[str, Any], args: argparse.Namespace
         "train_calmar": _to_float(train.get("calmar")),
         "validation_calmar": _to_float(validation.get("calmar")),
         "validation_sharpe_ratio_to_train": ratio,
+        "aurora_metric_source": f"train:{train_metric_source};validation:{validation_metric_source}",
+        "aurora_comparable_sharpe": comparable_sharpe,
         "train_sharpe_gt_1": bool(train_sharpe > 1.0),
         "validation_sharpe_gt_1": bool(validation_sharpe > 1.0),
         "validation_sharpe_ge_80pct_train": bool(ratio >= 0.80),
-        "verified_sharpe_robust": bool(train_sharpe > 1.0 and validation_sharpe > 1.0 and ratio >= 0.80),
+        "verified_sharpe_robust": bool(comparable_sharpe and train_sharpe > 1.0 and validation_sharpe > 1.0 and ratio >= 0.80),
         "accepted": bool(train_sharpe > 1.0),
         "weekly_multi_asset_score": score,
         "elapsed_seconds": float(args.time_budget_minutes) * 60.0,
@@ -190,9 +224,9 @@ def _aurora_candidate_to_row(candidate: dict[str, Any], args: argparse.Namespace
 
 
 def _spy_common_daily(daily: pd.DataFrame) -> pd.DataFrame:
-    cols = [column for column in ("open", "high", "low", "close", "volume") if column in daily]
-    out = daily.loc[:, cols].copy()
-    out["adj_close"] = out["close"]
+    out = daily.copy()
+    if "adj_close" not in out and "close" in out:
+        out["adj_close"] = out["close"]
     return out
 
 
@@ -267,6 +301,12 @@ def _to_float(value: object, default: float = float("nan")) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _is_finite(value: float) -> bool:
+    import math
+
+    return math.isfinite(float(value))
 
 
 if __name__ == "__main__":

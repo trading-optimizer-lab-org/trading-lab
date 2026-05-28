@@ -823,7 +823,8 @@ def _run_bohb_real(
     worker.run(background=True)
     optimizer = BOHB(configspace=cs, run_id=run_id, nameserver=ns_host, nameserver_port=ns_port, min_budget=1, max_budget=3)
     try:
-        iterations = max(1, min(32, int(config.seed_pool // 32) or 1))
+        remaining_seconds = max(1.0, deadline - time.monotonic())
+        iterations = max(1, min(8, int(remaining_seconds // 15) or 1, int(config.seed_pool // 32) or 1))
         optimizer.run(n_iterations=iterations, min_n_workers=1)
     finally:
         optimizer.shutdown(shutdown_workers=True)
@@ -889,18 +890,28 @@ def _hpo_configspace(
     universes: list[tuple[str, ...]],
     config: MonthlyRiskSearchConfig,
 ) -> Any:
-    from ConfigSpace import CategoricalHyperparameter, ConfigurationSpace, UniformFloatHyperparameter, UniformIntegerHyperparameter
+    from ConfigSpace import CategoricalHyperparameter, ConfigurationSpace, Constant, UniformFloatHyperparameter, UniformIntegerHyperparameter
 
     cs = ConfigurationSpace()
-    cs.add_hyperparameter(UniformIntegerHyperparameter("feature_count", lower=1, upper=max(1, min(config.max_features, len(catalog)))))
-    cs.add_hyperparameter(UniformIntegerHyperparameter("asset_universe", lower=0, upper=max(0, len(universes) - 1)))
+    feature_count_upper = max(1, min(config.max_features, len(catalog)))
+    if feature_count_upper <= 1:
+        cs.add_hyperparameter(Constant("feature_count", 1))
+    else:
+        cs.add_hyperparameter(UniformIntegerHyperparameter("feature_count", lower=1, upper=feature_count_upper))
+    if len(universes) <= 1:
+        cs.add_hyperparameter(Constant("asset_universe", 0))
+    else:
+        cs.add_hyperparameter(CategoricalHyperparameter("asset_universe", choices=list(range(len(universes)))))
     cs.add_hyperparameter(CategoricalHyperparameter("selector", choices=list(WEEKLY_ASSET_SELECTORS)))
     cs.add_hyperparameter(UniformFloatHyperparameter("intercept", lower=-0.55, upper=0.55))
     cs.add_hyperparameter(UniformFloatHyperparameter("scale", lower=0.15, upper=1.45))
     cs.add_hyperparameter(CategoricalHyperparameter("smoothing", choices=[0.0, 0.10, 0.20, 0.35, 0.50]))
     max_index = max(0, len(catalog) - 1)
     for index in range(max(1, config.max_features)):
-        cs.add_hyperparameter(UniformIntegerHyperparameter(f"spec_{index}", lower=0, upper=max_index))
+        if max_index <= 0:
+            cs.add_hyperparameter(Constant(f"spec_{index}", 0))
+        else:
+            cs.add_hyperparameter(UniformIntegerHyperparameter(f"spec_{index}", lower=0, upper=max_index))
     return cs
 
 

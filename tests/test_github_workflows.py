@@ -639,6 +639,42 @@ def test_weekly_spy_sharpe_10methods_9h_waves_is_pending_manual_balanced_and_loc
     assert "No lanzar automaticamente" in pending
 
 
+def test_weekly_multi_asset_sharpe_10methods_4h_waves_uses_feature_panel_and_locked_closed() -> None:
+    text = Path(".github/workflows/weekly-multi-asset-sharpe-10methods-4h-waves.yml").read_text(encoding="utf-8")
+    wave = Path(".github/workflows/weekly-multi-asset-sharpe-10methods-4h-wave.yml").read_text(encoding="utf-8")
+    config = Path("configs/weekly_multi_asset_sharpe_10methods_4h_waves.yaml").read_text(encoding="utf-8")
+
+    assert "name: Weekly Multi Asset Sharpe 10 Methods 4h Waves" in text
+    assert "workflow_dispatch" in text
+    assert "push:" in text
+    assert ".github/weekly-multi-asset-sharpe-10methods-4h-trigger.txt" in text
+    assert "inputs.minutes_per_method_stage || '70'" in text
+    assert "inputs.max_parallel || '180'" in text
+    assert "wave-2:" in text
+    assert "wave-3:" not in text
+    assert "download_public_data.py --feature-panel --output data/public/spy_daily.csv" in text
+    assert "scripts/audit_weekly_multi_asset_panel.py" in text
+    assert "weekly-multi-asset-sharpe-10methods-4h-waves-leaderboard" in text
+    assert "--expected-jobs 360" in text
+
+    assert "workflow_call" in wave
+    assert "timeout-minutes: 80" in wave
+    assert "method: [beam, genetic, sobol_random_asha_real, optuna_tpe_hyperband, dehb_real, bohb_real, smac_mf_real, bandit, aurora_ml, github_ml]" in wave
+    assert "--total-stages 18" in wave
+    assert "--file-prefix \"$FILE_PREFIX\"" in wave
+
+    assert "waves: 2" in config
+    assert "jobs_per_wave: 180" in config
+    assert "jobs_per_method_total: 36" in config
+    assert "jobs_total: 360" in config
+    assert "max_parallel: 180" in config
+    assert "minutes_per_method_stage: 70" in config
+    assert "timeout_minutes_per_job: 80" in config
+    assert "score_mode: train_sharpe_max_validation_80pct_report" in config
+    assert "validation_role: report_only" in config
+    assert "locked_opened: false" in config
+
+
 def test_ci_is_manual_or_pull_request_only() -> None:
     text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 

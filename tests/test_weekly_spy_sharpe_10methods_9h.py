@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import json
+from argparse import Namespace
 from pathlib import Path
 
+import math
 import pandas as pd
+import pytest
 
 from scripts.merge_weekly_spy_sharpe_10methods_9h import main as merge_main
+from scripts.run_weekly_spy_sharpe_4methods_180_stage import (
+    _aurora_candidate_to_row,
+    _aurora_price_and_pending_frames,
+    _spy_common_daily,
+)
 from scripts.merge_weekly_spy_sharpe_10methods_9h_state import merge_state_files
+from trading_lab.monthly_risk import MonthlyRiskSearchConfig
+from trading_lab.weekly_7methods_stateful import _candidate_from_hpo_config, _hpo_configspace
 
 
 def test_merge_10methods_outputs_partial_summary_and_sharpe_files(tmp_path: Path, monkeypatch) -> None:
@@ -114,3 +124,80 @@ def test_merge_10methods_state_keeps_methods_even_when_partial(tmp_path: Path) -
     assert beam_state["candidate_count"] == 1
     assert beam_state["candidates"][0]["train_score"] == 2.0
     assert genetic_state["candidate_count"] == 0
+
+
+def test_real_hpo_configspace_handles_single_and_many_asset_universes() -> None:
+    pytest.importorskip("ConfigSpace")
+
+    config = MonthlyRiskSearchConfig(stage=0, total_stages=1, max_features=2, seed_pool=8)
+    single = _hpo_configspace(["spec_a"], [("SPY",)], config)
+    single_candidate = _candidate_from_hpo_config(single.get_default_configuration(), ["spec_a"], [("SPY",)], config)
+
+    assert single_candidate.assets == ("SPY",)
+    assert single_candidate.specs == ("spec_a",)
+
+    many_universes = [("SPY",), ("SPY", "QQQ"), ("SPY", "TLT", "GLD")]
+    many = _hpo_configspace(["spec_a", "spec_b", "spec_c"], many_universes, config)
+    many_candidate = _candidate_from_hpo_config(many.sample_configuration(), ["spec_a", "spec_b", "spec_c"], many_universes, config)
+
+    assert many_candidate.assets
+    assert set(many_candidate.assets).issubset({"SPY", "QQQ", "TLT", "GLD"})
+    assert many_candidate.specs
+
+
+def test_aurora_candidate_uses_clear_metric_proxy_instead_of_silent_nan() -> None:
+    args = Namespace(wave=1, stage=2, time_budget_minutes=1)
+    row = _aurora_candidate_to_row(
+        {
+            "candidate_id": "ml-1",
+            "model": "forest",
+            "feature_set": ["ret_lag_1"],
+            "train_metrics": {"cagr": 12.0, "mdd": -6.0, "calmar": 2.0},
+            "validation_metrics": {"cagr": 8.0, "mdd": -5.0, "calmar": 1.6},
+        },
+        args,
+    )
+
+    assert math.isfinite(row["train_sharpe"])
+    assert math.isfinite(row["validation_sharpe"])
+    assert row["aurora_metric_source"] == "train:calmar_proxy;validation:calmar_proxy"
+    assert row["aurora_comparable_sharpe"] is False
+    assert row["verified_sharpe_robust"] is False
+
+
+def test_spy_common_daily_preserves_multi_asset_ratio_columns() -> None:
+    frame = pd.DataFrame(
+        {
+            "open": [1.0],
+            "high": [1.0],
+            "low": [1.0],
+            "close": [1.0],
+            "volume": [100],
+            "qqq_close_ratio": [1.2],
+        }
+    )
+
+    out = _spy_common_daily(frame)
+
+    assert "qqq_close_ratio" in out.columns
+    assert "adj_close" in out.columns
+
+
+def test_aurora_price_and_pending_frames_split_panel_columns() -> None:
+    frame = pd.DataFrame(
+        {
+            "open": [1.0],
+            "high": [2.0],
+            "low": [0.5],
+            "close": [1.5],
+            "adj_close": [1.5],
+            "volume": [100],
+            "qqq_close_ratio": [1.2],
+            "tlt_ret_21": [0.03],
+        }
+    )
+
+    price, pending = _aurora_price_and_pending_frames(frame)
+
+    assert list(price.columns) == ["open", "high", "low", "close", "adj_close", "volume"]
+    assert set(pending.columns) == {"qqq_close_ratio", "tlt_ret_21"}

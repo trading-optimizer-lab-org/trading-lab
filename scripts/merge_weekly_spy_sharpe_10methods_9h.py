@@ -29,8 +29,6 @@ DEFAULT_METHODS = (
     "github_ml",
 )
 
-STAGE_FILE_RE = re.compile(r"weekly_spy_sharpe_10methods_9h_leaderboard_stage_(?P<method>.+)_(?P<wave>\d+)_(?P<stage>\d+)\.csv$")
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Merge weekly SPY Sharpe 10-method 9h wave outputs.")
@@ -50,11 +48,17 @@ def main() -> int:
         expected_jobs=args.expected_jobs,
         expected_methods=methods,
     )
-    partial = _partial_summary(args.input_glob, methods=methods, expected_waves=int(raw_config.get("waves", 5)), expected_stages=int(raw_config.get("stages_per_method", 18)))
+    partial = _partial_summary(
+        args.input_glob,
+        methods=methods,
+        expected_waves=int(raw_config.get("waves", 5)),
+        expected_stages=int(raw_config.get("stages_per_method", 18)),
+        file_prefix=args.file_prefix,
+    )
     final_summary = {
         **summary,
         **partial,
-        "artifact": "weekly-spy-sharpe-10methods-9h-waves-leaderboard",
+        "artifact": str(raw_config.get("artifact_name", "weekly-spy-sharpe-10methods-9h-waves-leaderboard")),
         "methods": methods,
         "partial": bool(partial["artifacts_downloaded"] < partial["expected_artifacts"]),
         "locked_opened": False,
@@ -82,9 +86,12 @@ def main() -> int:
     return 0
 
 
-def _partial_summary(input_glob: str, *, methods: list[str], expected_waves: int, expected_stages: int) -> dict[str, Any]:
+def _partial_summary(input_glob: str, *, methods: list[str], expected_waves: int, expected_stages: int, file_prefix: str) -> dict[str, Any]:
     import glob
 
+    stage_file_re = re.compile(
+        rf"{re.escape(file_prefix)}_leaderboard_stage_(?P<method>.+)_(?P<wave>\d+)_(?P<stage>\d+)\.csv$"
+    )
     paths = sorted(glob.glob(input_glob, recursive=True))
     waves_found: set[int] = set()
     files_by_method: dict[str, int] = {method: 0 for method in methods}
@@ -92,7 +99,7 @@ def _partial_summary(input_glob: str, *, methods: list[str], expected_waves: int
     stages_by_wave_method: dict[str, dict[str, int]] = defaultdict(lambda: {method: 0 for method in methods})
     matched = 0
     for raw_path in paths:
-        match = STAGE_FILE_RE.search(Path(raw_path).name)
+        match = stage_file_re.search(Path(raw_path).name)
         if not match:
             continue
         matched += 1
