@@ -675,6 +675,22 @@ def test_weekly_multi_asset_sharpe_10methods_4h_waves_uses_feature_panel_and_loc
     assert "locked_opened: false" in config
 
 
+def test_weekly_multi_asset_universal_robustness_runs_chunked_on_github() -> None:
+    text = Path(".github/workflows/weekly-multi-asset-universal-robustness.yml").read_text(encoding="utf-8")
+
+    assert "name: Weekly Multi Asset Universal Robustness" in text
+    assert "workflow_dispatch" in text
+    assert ".github/weekly-multi-asset-universal-robustness-trigger.txt" in text
+    assert "run-id: ${{ env.SOURCE_RUN_ID }}" in text
+    assert "weekly_multi_asset_sharpe_10methods_4h_verified.csv" in text
+    assert "split_universal_robustness_leaderboard.py" in text
+    assert "run_universal_strategy_robustness.py" in text
+    assert "merge_universal_robustness_chunks.py" in text
+    assert "max-parallel: 64" in text
+    assert "--bootstrap-samples \"$BOOTSTRAP_SAMPLES\"" in text
+    assert "weekly-multi-asset-universal-robustness-results" in text
+
+
 def test_ci_is_manual_or_pull_request_only() -> None:
     text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 
