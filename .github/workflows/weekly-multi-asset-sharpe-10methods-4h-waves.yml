@@ -10,7 +10,7 @@ on:
       minutes_per_method_stage:
         description: "Minutes for each method-stage job"
         required: true
-        default: "70"
+        default: "110"
       max_parallel:
         description: "Max parallel jobs inside each wave"
         required: true
@@ -42,8 +42,8 @@ jobs:
           test "${{ inputs.waves || '2' }}" = "2"
           test "${{ inputs.max_parallel || '180' }}" -ge 1
           test "${{ inputs.max_parallel || '180' }}" -le 180
-          test "${{ inputs.minutes_per_method_stage || '70' }}" -ge 1
-          test "${{ inputs.minutes_per_method_stage || '70' }}" -le 70
+          test "${{ inputs.minutes_per_method_stage || '110' }}" -ge 1
+          test "${{ inputs.minutes_per_method_stage || '110' }}" -le 110
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -76,7 +76,7 @@ jobs:
     uses: ./.github/workflows/weekly-multi-asset-sharpe-10methods-4h-wave.yml
     with:
       wave: 1
-      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage || '70') }}
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage || '110') }}
       max_parallel: ${{ fromJSON(inputs.max_parallel || '180') }}
       prior_state_artifact: ""
 
@@ -85,7 +85,7 @@ jobs:
     uses: ./.github/workflows/weekly-multi-asset-sharpe-10methods-4h-wave.yml
     with:
       wave: 2
-      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage || '70') }}
+      minutes_per_method_stage: ${{ fromJSON(inputs.minutes_per_method_stage || '110') }}
       max_parallel: ${{ fromJSON(inputs.max_parallel || '180') }}
       prior_state_artifact: weekly-multi-asset-sharpe-10methods-4h-state-wave-1
 

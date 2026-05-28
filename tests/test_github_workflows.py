@@ -648,7 +648,7 @@ def test_weekly_multi_asset_sharpe_10methods_4h_waves_uses_feature_panel_and_loc
     assert "workflow_dispatch" in text
     assert "push:" in text
     assert ".github/weekly-multi-asset-sharpe-10methods-4h-trigger.txt" in text
-    assert "inputs.minutes_per_method_stage || '70'" in text
+    assert "inputs.minutes_per_method_stage || '110'" in text
     assert "inputs.max_parallel || '180'" in text
     assert "wave-2:" in text
     assert "wave-3:" not in text
@@ -658,7 +658,7 @@ def test_weekly_multi_asset_sharpe_10methods_4h_waves_uses_feature_panel_and_loc
     assert "--expected-jobs 360" in text
 
     assert "workflow_call" in wave
-    assert "timeout-minutes: 80" in wave
+    assert "timeout-minutes: 120" in wave
     assert "method: [beam, genetic, sobol_random_asha_real, optuna_tpe_hyperband, dehb_real, bohb_real, smac_mf_real, bandit, aurora_ml, github_ml]" in wave
     assert "--total-stages 18" in wave
     assert "--file-prefix \"$FILE_PREFIX\"" in wave
@@ -668,8 +668,8 @@ def test_weekly_multi_asset_sharpe_10methods_4h_waves_uses_feature_panel_and_loc
     assert "jobs_per_method_total: 36" in config
     assert "jobs_total: 360" in config
     assert "max_parallel: 180" in config
-    assert "minutes_per_method_stage: 70" in config
-    assert "timeout_minutes_per_job: 80" in config
+    assert "minutes_per_method_stage: 110" in config
+    assert "timeout_minutes_per_job: 120" in config
     assert "score_mode: train_sharpe_max_validation_80pct_report" in config
     assert "validation_role: report_only" in config
     assert "locked_opened: false" in config

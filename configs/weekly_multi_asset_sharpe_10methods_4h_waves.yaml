@@ -17,8 +17,8 @@ mutations_per_parent: 36
 top_rows_per_stage: 500
 random_seed: 4281004
 waves: 2
-minutes_per_method_stage: 70
-timeout_minutes_per_job: 80
+minutes_per_method_stage: 110
+timeout_minutes_per_job: 120
 methods_per_wave: 10
 stages_per_method: 18
 jobs_per_method_per_wave: 18

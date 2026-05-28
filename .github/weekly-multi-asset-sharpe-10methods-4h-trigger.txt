@@ -1,1 +1,1 @@
-launch 2026-05-28T00:00:00Z weekly multi asset sharpe 10methods 4h
+launch 2026-05-28T10:57:00Z weekly multi asset sharpe 10methods extended to 16:00

@@ -30,7 +30,7 @@ permissions:
 jobs:
   search:
     runs-on: ubuntu-latest
-    timeout-minutes: 80
+    timeout-minutes: 120
     continue-on-error: true
     strategy:
       fail-fast: false
