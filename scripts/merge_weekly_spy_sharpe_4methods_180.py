@@ -38,6 +38,7 @@ def merge_outputs(
     file_prefix: str,
     expected_jobs: int,
     expected_methods: Iterable[str] = DEFAULT_METHODS,
+    score_mode: str = "train_sharpe_max_validation_80pct_report",
 ) -> dict[str, Any]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -50,7 +51,7 @@ def merge_outputs(
             continue
     leaderboard = pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
     if not leaderboard.empty:
-        leaderboard = _stamp_validity(leaderboard)
+        leaderboard = _stamp_validity(leaderboard, score_mode=score_mode)
         leaderboard = leaderboard.sort_values("weekly_multi_asset_score", ascending=False, na_position="last").reset_index(drop=True)
     else:
         leaderboard = _empty_leaderboard()
@@ -87,16 +88,23 @@ def merge_outputs(
         "partial": int(parallelism["jobs_completed"]) < int(expected_jobs),
         "locked_opened": bool(_locked_opened(leaderboard)),
         "validation_role": "report_only",
-        "score_mode": "train_sharpe_max_validation_80pct_report",
+        "score_mode": score_mode,
         "methods": list(expected_methods),
     }
     (output / f"{file_prefix}_summary.json").write_text(json.dumps(_json_safe(summary), indent=2, sort_keys=True), encoding="utf-8")
     return summary
 
 
-def _stamp_validity(frame: pd.DataFrame) -> pd.DataFrame:
+def _stamp_validity(frame: pd.DataFrame, *, score_mode: str = "train_sharpe_max_validation_80pct_report") -> pd.DataFrame:
     out = frame.copy()
-    for column in ("train_sharpe", "validation_sharpe", "weekly_multi_asset_score"):
+    for column in (
+        "train_sharpe",
+        "validation_sharpe",
+        "weekly_multi_asset_score",
+        "train_cagr",
+        "average_abs_exposure",
+        "train_years_positive",
+    ):
         out[column] = pd.to_numeric(out.get(column, pd.Series(dtype=float)), errors="coerce")
     locked = out.get("locked_opened", pd.Series(False, index=out.index)).astype(str).str.lower().isin(("true", "1", "yes"))
     ratio = out["validation_sharpe"] / out["train_sharpe"].where(out["train_sharpe"] > 0)
@@ -104,13 +112,23 @@ def _stamp_validity(frame: pd.DataFrame) -> pd.DataFrame:
     out["train_sharpe_gt_1"] = out["train_sharpe"] > 1.0
     out["validation_sharpe_gt_1"] = out["validation_sharpe"] > 1.0
     out["validation_sharpe_ge_80pct_train"] = ratio >= 0.80
-    out["verified_sharpe_robust"] = (
-        out["train_sharpe_gt_1"]
-        & out["validation_sharpe_gt_1"]
-        & out["validation_sharpe_ge_80pct_train"]
-        & ~locked
-    )
-    out["relaxed_valid"] = (out["train_sharpe"] > 0.0) & (out["validation_sharpe"] > 0.0) & ~locked
+    if score_mode == "train_sharpe_positive_years_report_validation":
+        out["verified_sharpe_robust"] = (
+            out["train_sharpe_gt_1"]
+            & (out["train_cagr"] >= 0.04)
+            & (out["train_years_positive"] >= 10)
+            & (out["average_abs_exposure"] >= 0.15)
+            & ~locked
+        )
+        out["relaxed_valid"] = (out["train_sharpe"] > 0.0) & ~locked
+    else:
+        out["verified_sharpe_robust"] = (
+            out["train_sharpe_gt_1"]
+            & out["validation_sharpe_gt_1"]
+            & out["validation_sharpe_ge_80pct_train"]
+            & ~locked
+        )
+        out["relaxed_valid"] = (out["train_sharpe"] > 0.0) & (out["validation_sharpe"] > 0.0) & ~locked
     out["locked_opened"] = locked
     return out
 
@@ -131,6 +149,8 @@ def _method_summary(rows: pd.DataFrame, verified: pd.DataFrame, relaxed: pd.Data
                 "best_candidate": str(group.iloc[0].get("candidate_id", "")) if not group.empty else "",
                 "best_train_sharpe": _best_float(group, "train_sharpe"),
                 "best_validation_sharpe": _best_float(group, "validation_sharpe"),
+                "best_train_years_positive": _best_float(group, "train_years_positive"),
+                "best_validation_years_positive": _best_float(group, "validation_years_positive"),
                 "best_score": _best_float(group, "weekly_multi_asset_score"),
             }
         )
@@ -226,6 +246,8 @@ def _locked_opened(frame: pd.DataFrame) -> bool:
 def _unique_stage_count(frame: pd.DataFrame) -> int:
     if frame.empty or "method" not in frame or "stage" not in frame:
         return 0
+    if "wave" in frame:
+        return int(frame[["method", "wave", "stage"]].drop_duplicates().shape[0])
     return int(frame[["method", "stage"]].drop_duplicates().shape[0])
 
 

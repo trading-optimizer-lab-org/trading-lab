@@ -47,6 +47,7 @@ def main() -> int:
         file_prefix=args.file_prefix,
         expected_jobs=args.expected_jobs,
         expected_methods=methods,
+        score_mode=str(raw_config.get("score_mode", "train_sharpe_max_validation_80pct_report")),
     )
     partial = _partial_summary(
         args.input_glob,
@@ -63,6 +64,7 @@ def main() -> int:
         "partial": bool(partial["artifacts_downloaded"] < partial["expected_artifacts"]),
         "locked_opened": False,
         "validation_role": "report_only",
+        "score_mode": str(raw_config.get("score_mode", "train_sharpe_max_validation_80pct_report")),
     }
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)

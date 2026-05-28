@@ -17,6 +17,7 @@ from trading_lab.weekly_multi_asset import _weekly_calmar_score
 from trading_lab.weekly_multi_asset import (
     WEEKLY_MAX_SHARPE_SCORE_MODE,
     WeeklyMachineLearningCandidate,
+    _weekly_sharpe_positive_years_score,
     _weekly_sharpe_score,
     evaluate_weekly_machine_learning_candidate,
 )
@@ -165,6 +166,33 @@ def test_weekly_sharpe_score_prioritizes_train_sharpe_before_tiebreakers() -> No
     }
 
     assert _weekly_sharpe_score(high_sharpe_low_cagr) > _weekly_sharpe_score(low_sharpe_high_cagr)
+
+
+def test_weekly_sharpe_positive_years_score_uses_train_years_before_validation() -> None:
+    fewer_train_years_better_validation = {
+        "train_sharpe": 1.5,
+        "train_years_positive": 10,
+        "train_cagr": 0.12,
+        "train_mdd": -0.10,
+        "train_min_year_return": 0.00,
+        "validation_sharpe": 3.0,
+        "validation_years_positive": 12,
+        "feature_count": 3,
+    }
+    more_train_years_worse_validation = {
+        "train_sharpe": 1.5,
+        "train_years_positive": 13,
+        "train_cagr": 0.12,
+        "train_mdd": -0.10,
+        "train_min_year_return": 0.00,
+        "validation_sharpe": 0.2,
+        "validation_years_positive": 1,
+        "feature_count": 3,
+    }
+
+    assert _weekly_sharpe_positive_years_score(more_train_years_worse_validation) > _weekly_sharpe_positive_years_score(
+        fewer_train_years_better_validation
+    )
 
 
 def test_weekly_machine_learning_candidate_fits_train_only_and_keeps_locked_closed() -> None:

@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from scripts.merge_weekly_spy_sharpe_10methods_9h import main as merge_main
+from scripts.merge_weekly_spy_sharpe_4methods_180 import merge_outputs
 from scripts.run_weekly_spy_sharpe_4methods_180_stage import (
     _aurora_candidate_to_row,
     _aurora_price_and_pending_frames,
@@ -16,7 +17,8 @@ from scripts.run_weekly_spy_sharpe_4methods_180_stage import (
 )
 from scripts.merge_weekly_spy_sharpe_10methods_9h_state import merge_state_files
 from trading_lab.monthly_risk import MonthlyRiskSearchConfig
-from trading_lab.weekly_7methods_stateful import _candidate_from_hpo_config, _hpo_configspace
+from trading_lab.weekly_7methods_stateful import _candidate_from_hpo_config, _hpo_configspace, run_weekly_machine_learning_search
+from trading_lab.weekly_multi_asset import WeeklyMachineLearningCandidate
 
 
 def test_merge_10methods_outputs_partial_summary_and_sharpe_files(tmp_path: Path, monkeypatch) -> None:
@@ -88,6 +90,46 @@ def test_merge_10methods_outputs_partial_summary_and_sharpe_files(tmp_path: Path
     assert summary["partial"] is True
     assert list(verified["candidate_id"]) == ["beam_ok"]
     assert set(relaxed["candidate_id"]) == {"beam_ok", "github_relaxed"}
+
+
+def test_merge_positive_years_mode_does_not_use_validation_for_verified(tmp_path: Path) -> None:
+    stage = tmp_path / "wave_1" / "beam" / "stage_0"
+    stage.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "candidate_id": "train_ok_validation_bad",
+                "method": "beam",
+                "wave": 1,
+                "stage": 0,
+                "weekly_multi_asset_score": 1_700_000,
+                "train_sharpe": 1.7,
+                "validation_sharpe": -0.5,
+                "train_cagr": 0.08,
+                "train_years_positive": 12,
+                "validation_years_positive": 2,
+                "average_abs_exposure": 0.5,
+                "locked_opened": False,
+            }
+        ]
+    ).to_csv(stage / "weekly_positive_leaderboard_stage_beam_1_0.csv", index=False)
+    (stage / "job_meta.json").write_text(
+        json.dumps({"started_epoch": 1000, "ended_epoch": 1100, "method": "beam", "stage": 0, "wave": 1}),
+        encoding="utf-8",
+    )
+
+    summary = merge_outputs(
+        input_glob=str(tmp_path / "**" / "weekly_positive_leaderboard_stage_*.csv"),
+        output_dir=tmp_path / "merged",
+        file_prefix="weekly_positive",
+        expected_jobs=1,
+        expected_methods=["beam"],
+        score_mode="train_sharpe_positive_years_report_validation",
+    )
+    verified = pd.read_csv(tmp_path / "merged" / "weekly_positive_verified.csv")
+
+    assert summary["score_mode"] == "train_sharpe_positive_years_report_validation"
+    assert list(verified["candidate_id"]) == ["train_ok_validation_bad"]
 
 
 def test_merge_10methods_state_keeps_methods_even_when_partial(tmp_path: Path) -> None:
@@ -201,3 +243,61 @@ def test_aurora_price_and_pending_frames_split_panel_columns() -> None:
 
     assert list(price.columns) == ["open", "high", "low", "close", "adj_close", "volume"]
     assert set(pending.columns) == {"qqq_close_ratio", "tlt_ret_21"}
+
+
+def test_weekly_machine_learning_search_checks_deadline_inside_candidate_batch(monkeypatch) -> None:
+    weeks = pd.date_range("1994-01-07", "2019-12-27", freq="W-FRI")
+    examples = pd.DataFrame(
+        {
+            "decision_date": weeks,
+            "target_week_end": weeks,
+            "target_year": weeks.year,
+            "spy_return_next_week": 0.01,
+            "sp500_down_year": False,
+            "asset_spy_return_next_week": 0.01,
+            "feature_a": range(len(weeks)),
+            "feature_b": range(len(weeks), 0, -1),
+        }
+    )
+    calls = {"count": 0}
+
+    def fake_next_ml_candidates(*args, **kwargs):
+        return [
+            WeeklyMachineLearningCandidate(features=("feature_a",), assets=("SPY",), model="ridge"),
+            WeeklyMachineLearningCandidate(features=("feature_b",), assets=("SPY",), model="ridge"),
+        ]
+
+    def fake_evaluate(*args, **kwargs):
+        calls["count"] += 1
+        row = {
+            "candidate_id": f"ml_{calls['count']}",
+            "method": "machine_learning",
+            "features": "feature_a",
+            "weekly_multi_asset_score": float(calls["count"]),
+            "train_sharpe": 1.2,
+            "validation_sharpe": -1.0,
+            "train_cagr": 0.08,
+            "train_years_positive": 12,
+            "validation_years_positive": 1,
+            "average_abs_exposure": 0.5,
+            "accepted": True,
+            "verified_sharpe_robust": True,
+        }
+        return row, pd.DataFrame(), pd.DataFrame()
+
+    ticks = iter([0.0, 0.0, 2.0, 2.0])
+    monkeypatch.setattr("trading_lab.weekly_7methods_stateful._next_ml_candidates", fake_next_ml_candidates)
+    monkeypatch.setattr("trading_lab.weekly_7methods_stateful.evaluate_weekly_machine_learning_candidate", fake_evaluate)
+    monkeypatch.setattr("trading_lab.weekly_7methods_stateful.time.monotonic", lambda: next(ticks, 2.0))
+
+    rows, _ = run_weekly_machine_learning_search(
+        examples,
+        MonthlyRiskSearchConfig(stage=0, total_stages=1, seed_pool=10, top_rows_per_stage=10),
+        method="machine_learning",
+        wave=1,
+        stage=0,
+        time_budget_minutes=0.001,
+    )
+
+    assert len(rows) == 1
+    assert calls["count"] == 1

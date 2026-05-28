@@ -28,6 +28,7 @@ MIN_DOWN_YEAR_RETURN = 0.05
 WEEKLY_DOWN_5PCT_SCORE_MODE = "train_only_weekly_sp500_down_5pct"
 WEEKLY_MAX_CALMAR_SCORE_MODE = "train_calmar_max_validation_80pct_report"
 WEEKLY_MAX_SHARPE_SCORE_MODE = "train_sharpe_max_validation_80pct_report"
+WEEKLY_SHARPE_POSITIVE_YEARS_SCORE_MODE = "train_sharpe_positive_years_report_validation"
 WEEKLY_ASSET_SELECTORS = ("momentum_4w", "momentum_13w", "momentum_26w", "momentum_52w", "low_vol_13w")
 WEEKLY_METHODS = ("random_broad", "beam", "genetic", "bayesian_like", "bandit")
 
@@ -250,6 +251,12 @@ def evaluate_weekly_multi_asset_candidate(
         row["accepted"] = row["rejection_reason"] == ""
         row["verified_train_validation_5pct"] = False
         row["weekly_multi_asset_score"] = _weekly_sharpe_score(row)
+    elif score_mode == WEEKLY_SHARPE_POSITIVE_YEARS_SCORE_MODE:
+        _stamp_sharpe_verification(row)
+        row["rejection_reason"] = _sharpe_rejection_reason(row)
+        row["accepted"] = row["rejection_reason"] == ""
+        row["verified_train_validation_5pct"] = False
+        row["weekly_multi_asset_score"] = _weekly_sharpe_positive_years_score(row)
     else:
         row["rejection_reason"] = _rejection_reason(row)
         row["accepted"] = row["rejection_reason"] == ""
@@ -403,7 +410,10 @@ def evaluate_weekly_machine_learning_candidate(
     _stamp_sharpe_verification(row)
     row["rejection_reason"] = _sharpe_rejection_reason(row)
     row["accepted"] = row["rejection_reason"] == ""
-    row["weekly_multi_asset_score"] = _weekly_sharpe_score(row)
+    if score_mode == WEEKLY_SHARPE_POSITIVE_YEARS_SCORE_MODE:
+        row["weekly_multi_asset_score"] = _weekly_sharpe_positive_years_score(row)
+    else:
+        row["weekly_multi_asset_score"] = _weekly_sharpe_score(row)
     return row, positions, year_by_year
 
 
@@ -1313,6 +1323,24 @@ def _weekly_sharpe_score(row: dict[str, object]) -> float:
         sharpe * 1_000_000.0
         + train_cagr * 100_000.0
         + train_min * 10_000.0
+        - abs(train_mdd) * 1_000.0
+        - max(0, feature_count - 5) * 10.0
+    )
+
+
+def _weekly_sharpe_positive_years_score(row: dict[str, object]) -> float:
+    train_sharpe = _finite_float(row.get("train_sharpe"), default=-1_000_000.0)
+    train_cagr = _finite_float(row.get("train_cagr"), default=-1.0)
+    train_mdd = _finite_float(row.get("train_mdd"), default=-1.0)
+    train_min = _finite_float(row.get("train_min_year_return"), default=-1.0)
+    train_years_positive = int(row.get("train_years_positive", 0) or 0)
+    feature_count = int(row.get("feature_count", 0) or 0)
+    sharpe = min(train_sharpe, 1_000_000.0) if np.isfinite(train_sharpe) else -1_000_000.0
+    return float(
+        sharpe * 1_000_000.0
+        + train_years_positive * 20_000.0
+        + train_cagr * 100_000.0
+        + train_min * 50_000.0
         - abs(train_mdd) * 1_000.0
         - max(0, feature_count - 5) * 10.0
     )

@@ -691,6 +691,47 @@ def test_weekly_multi_asset_universal_robustness_runs_chunked_on_github() -> Non
     assert "weekly-multi-asset-universal-robustness-results" in text
 
 
+def test_weekly_multi_asset_sharpe_positive_8methods_9h_500_shape() -> None:
+    text = Path(".github/workflows/weekly-multi-asset-sharpe-positive-8methods-9h-500.yml").read_text(encoding="utf-8")
+    block_a = Path(".github/workflows/weekly-multi-asset-sharpe-positive-8methods-9h-500-block-a.yml").read_text(encoding="utf-8")
+    block_b = Path(".github/workflows/weekly-multi-asset-sharpe-positive-8methods-9h-500-block-b.yml").read_text(encoding="utf-8")
+    config = Path("configs/weekly_multi_asset_sharpe_positive_8methods_9h_500.yaml").read_text(encoding="utf-8")
+
+    assert "name: Weekly Multi Asset Sharpe Positive Years 8 Methods 9h 500" in text
+    assert "workflow_dispatch" in text
+    assert "download_public_data.py --feature-panel --output data/public/spy_daily.csv" in text
+    assert "inputs.max_parallel || '500'" in text
+    assert "--expected-jobs 992" in text
+    assert "wave-1-a:" in text
+    assert "wave-1-b:" in text
+    assert "wave-2-a:" in text
+    assert "wave-2-b:" in text
+    assert "weekly-multi-asset-sharpe-positive-8methods-9h-500-leaderboard" in text
+
+    assert "method: [dehb_real, genetic, beam, bandit]" in block_a
+    assert "method: [github_ml, smac_mf_real, optuna_tpe_hyperband, sobol_random_asha_real]" in block_b
+    assert "--total-stages 62" in block_a
+    assert "--total-stages 62" in block_b
+    assert "max-parallel: ${{ inputs.max_parallel }}" in block_a
+    assert "max-parallel: ${{ inputs.max_parallel }}" in block_b
+    assert "aurora_ml" not in block_a
+    assert "aurora_ml" not in block_b
+    assert "bohb_real" not in block_a
+    assert "bohb_real" not in block_b
+
+    assert "waves: 2" in config
+    assert "jobs_total: 992" in config
+    assert "jobs_per_wave: 496" in config
+    assert "jobs_per_method_total: 124" in config
+    assert "max_parallel: 500" in config
+    assert "minutes_per_method_stage: 240" in config
+    assert "score_mode: train_sharpe_positive_years_report_validation" in config
+    assert "validation_role: report_only" in config
+    assert "locked_opened: false" in config
+    assert "aurora_ml" not in config
+    assert "bohb_real" not in config
+
+
 def test_ci_is_manual_or_pull_request_only() -> None:
     text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 

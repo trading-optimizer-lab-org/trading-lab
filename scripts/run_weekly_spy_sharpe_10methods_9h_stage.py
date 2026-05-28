@@ -79,7 +79,7 @@ def main() -> int:
             file_prefix=args.file_prefix,
         )
     except Exception as exc:
-        rows = [_error_row(args, exc)]
+        rows = [_error_row(args, exc, score_mode=_score_mode_from_config(args.config))]
         state = _simple_state(rows, method=args.method, wave=args.wave, stage=args.stage)
         write_stateful_weekly_outputs(
             rows,
@@ -162,7 +162,7 @@ def _simple_state(rows: list[dict[str, Any]], *, method: str, wave: int, stage: 
     }
 
 
-def _error_row(args: argparse.Namespace, exc: Exception) -> dict[str, Any]:
+def _error_row(args: argparse.Namespace, exc: Exception, *, score_mode: str = WEEKLY_MAX_SHARPE_SCORE_MODE) -> dict[str, Any]:
     return {
         "candidate_id": f"weekly_spy_sharpe_10methods_stage_error_{args.method}_{args.wave}_{args.stage}",
         "method": args.method,
@@ -177,8 +177,16 @@ def _error_row(args: argparse.Namespace, exc: Exception) -> dict[str, Any]:
         "verified_sharpe_robust": False,
         "locked_opened": False,
         "validation_role": "report_only",
-        "score_mode": WEEKLY_MAX_SHARPE_SCORE_MODE,
+        "score_mode": score_mode,
     }
+
+
+def _score_mode_from_config(config_path: str) -> str:
+    try:
+        raw_config = load_yaml(config_path)
+    except Exception:
+        return WEEKLY_MAX_SHARPE_SCORE_MODE
+    return str(raw_config.get("score_mode", WEEKLY_MAX_SHARPE_SCORE_MODE))
 
 
 def _utc_now() -> str:

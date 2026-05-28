@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -12,6 +13,7 @@ import pandas as pd
 from trading_lab.monthly_risk import MonthlyRiskSearchConfig, _json_safe
 from trading_lab.weekly_multi_asset import (
     WEEKLY_MAX_SHARPE_SCORE_MODE,
+    WEEKLY_SHARPE_POSITIVE_YEARS_SCORE_MODE,
     WEEKLY_ASSET_SELECTORS,
     WeeklyMachineLearningCandidate,
     WeeklyMultiAssetCandidate,
@@ -206,6 +208,8 @@ def run_weekly_machine_learning_search(
         if not candidates:
             break
         for candidate in candidates:
+            if rows and time.monotonic() >= deadline:
+                break
             key = (
                 tuple(sorted(candidate.features)),
                 tuple(sorted(candidate.assets)),
@@ -246,6 +250,8 @@ def run_weekly_machine_learning_search(
             row["validation_role"] = "report_only"
             rows.append(row)
         iteration += 1
+        if time.monotonic() >= deadline and rows:
+            break
         if time_budget_minutes <= 0:
             break
     rows = _trim_stage_rows(rows, config.top_rows_per_stage)
@@ -781,7 +787,8 @@ def _run_dehb_real(
         score = evaluate(candidate, backend="dehb")
         return {"fitness": -score, "cost": float(max(fidelity, 1.0))}
 
-    with tempfile.TemporaryDirectory(prefix="weekly_dehb_") as tmp:
+    tmp = tempfile.mkdtemp(prefix="weekly_dehb_")
+    try:
         optimizer = DEHB(
             f=objective,
             cs=cs,
@@ -793,6 +800,8 @@ def _run_dehb_real(
             output_path=tmp,
         )
         optimizer.run(total_cost=max(1.0, deadline - time.monotonic()))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _run_bohb_real(
@@ -969,7 +978,7 @@ def _evaluate_and_stamp(
                 and bool(row.get("verified_calmar_similarity"))
             )
             row["verified_train_validation_5pct"] = False
-        elif score_mode == WEEKLY_MAX_SHARPE_SCORE_MODE:
+        elif score_mode in (WEEKLY_MAX_SHARPE_SCORE_MODE, WEEKLY_SHARPE_POSITIVE_YEARS_SCORE_MODE):
             row["verified_sharpe_robust"] = (
                 bool(row.get("accepted"))
                 and _has_expected_validation_counts(row)
