@@ -1,0 +1,87 @@
+name: Weekly Multi Asset Sharpe Positive 5 Methods 1h Compare Wave
+
+on:
+  workflow_call:
+    inputs:
+      wave:
+        required: true
+        type: number
+      minutes_per_method_stage:
+        required: true
+        type: number
+      max_parallel:
+        required: true
+        type: number
+      prior_state_artifact:
+        required: false
+        type: string
+        default: ""
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CONFIG: configs/weekly_multi_asset_sharpe_positive_5methods_1h_compare.yaml
+  OUTPUT_DIR: outputs/weekly_multi_asset_sharpe_positive_5methods_1h_compare
+  FILE_PREFIX: weekly_multi_asset_sharpe_positive_5methods_1h_compare
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ inputs.max_parallel }}
+      matrix:
+        stage: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+        method: [dehb_real, genetic, beam, bandit, github_ml]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install -e ".[dev]" \
+            "optuna>=4.3,<5" \
+            "ConfigSpace>=1.2,<2" \
+            "smac>=2.2,<3" \
+            "dehb>=0.1,<1" \
+            "scikit-learn>=1.5,<2" \
+            "scipy>=1.12" \
+            "pyarrow>=15" \
+            "lightgbm>=4.3,<5" \
+            "xgboost>=2,<4"
+      - name: Download public multi-asset panel
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-multi-asset-sharpe-positive-5methods-1h-compare-public-panel
+          path: data/public
+      - name: Download prior wave state
+        if: ${{ inputs.prior_state_artifact != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.prior_state_artifact }}
+          path: state_in
+      - name: Run one fair method-stage job
+        run: |
+          python scripts/run_weekly_spy_sharpe_10methods_9h_stage.py \
+            --config "$CONFIG" \
+            --method "${{ matrix.method }}" \
+            --wave "${{ inputs.wave }}" \
+            --stage "${{ matrix.stage }}" \
+            --total-stages 20 \
+            --time-budget-minutes "${{ inputs.minutes_per_method_stage }}" \
+            --state-dir state_in \
+            --output-dir "$OUTPUT_DIR/wave_${{ inputs.wave }}/${{ matrix.method }}/stage_${{ matrix.stage }}" \
+            --file-prefix "$FILE_PREFIX" \
+            --top-rows-per-stage 500
+      - name: Upload method-stage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-multi-asset-sharpe-positive-5methods-1h-compare-wave-${{ inputs.wave }}-${{ matrix.method }}-stage-${{ matrix.stage }}
+          path: ${{ env.OUTPUT_DIR }}/wave_${{ inputs.wave }}/${{ matrix.method }}/stage_${{ matrix.stage }}
