@@ -691,6 +691,25 @@ def test_weekly_multi_asset_universal_robustness_runs_chunked_on_github() -> Non
     assert "weekly-multi-asset-universal-robustness-results" in text
 
 
+def test_weekly_multi_asset_sharpe_positive_8methods_universal_robustness_workflow() -> None:
+    text = Path(
+        ".github/workflows/weekly-multi-asset-sharpe-positive-8methods-universal-robustness.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "name: Weekly Multi Asset Sharpe Positive 8 Methods Universal Robustness" in text
+    assert "workflow_dispatch" in text
+    assert "26597223090" in text
+    assert "weekly-multi-asset-sharpe-positive-8methods-9h-500-leaderboard" in text
+    assert "weekly_multi_asset_sharpe_positive_8methods_9h_500_verified.csv" in text
+    assert "configs/weekly_multi_asset_sharpe_positive_8methods_9h_500.yaml" in text
+    assert 'default: "256"' in text
+    assert '--chunks "$CHUNKS"' in text
+    assert "--dedupe-key candidate_id" in text
+    assert "max-parallel: 128" in text
+    assert "--n-trials \"$N_TRIALS\"" in text
+    assert "weekly-multi-asset-sharpe-positive-8methods-universal-robustness-results" in text
+
+
 def test_weekly_multi_asset_sharpe_positive_8methods_9h_500_shape() -> None:
     text = Path(".github/workflows/weekly-multi-asset-sharpe-positive-8methods-9h-500.yml").read_text(encoding="utf-8")
     block_a = Path(".github/workflows/weekly-multi-asset-sharpe-positive-8methods-9h-500-block-a.yml").read_text(encoding="utf-8")

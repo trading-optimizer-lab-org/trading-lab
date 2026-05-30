@@ -1,0 +1,187 @@
+name: Weekly Multi Asset Sharpe Positive 8 Methods Universal Robustness
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Workflow run id containing the 8-method leaderboard artifact"
+        required: true
+        default: "26597223090"
+      source_artifact_name:
+        description: "Source leaderboard artifact name"
+        required: true
+        default: "weekly-multi-asset-sharpe-positive-8methods-9h-500-leaderboard"
+      chunks:
+        description: "Number of robustness chunks"
+        required: true
+        default: "256"
+      bootstrap_samples:
+        description: "Bootstrap samples per candidate"
+        required: true
+        default: "100"
+  push:
+    branches:
+      - main
+      - codex/**
+    paths:
+      - .github/weekly-multi-asset-sharpe-positive-8methods-universal-robustness-trigger.txt
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SOURCE_RUN_ID: ${{ inputs.source_run_id || '26597223090' }}
+  SOURCE_ARTIFACT_NAME: ${{ inputs.source_artifact_name || 'weekly-multi-asset-sharpe-positive-8methods-9h-500-leaderboard' }}
+  CHUNKS: ${{ inputs.chunks || '256' }}
+  BOOTSTRAP_SAMPLES: ${{ inputs.bootstrap_samples || '100' }}
+  CONFIG: configs/weekly_multi_asset_sharpe_positive_8methods_9h_500.yaml
+  SOURCE_VERIFIED_CSV: weekly_multi_asset_sharpe_positive_8methods_9h_500_verified.csv
+  OUTPUT_DIR: outputs/weekly_multi_asset_sharpe_positive_8methods_universal_robustness
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      n_trials: ${{ steps.matrix.outputs.n_trials }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shape
+        run: |
+          test "$CHUNKS" -ge 1
+          test "$CHUNKS" -le 512
+          test "$BOOTSTRAP_SAMPLES" -ge 10
+          test "$BOOTSTRAP_SAMPLES" -le 1000
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download public multi-asset panel
+        run: python scripts/download_public_data.py --feature-panel --output data/public/spy_daily.csv
+      - name: Download source leaderboard artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: trading-optimizer-lab-org/trading-lab
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          name: ${{ env.SOURCE_ARTIFACT_NAME }}
+          path: source_artifact
+      - name: Split unique verified candidates
+        run: |
+          python scripts/split_universal_robustness_leaderboard.py \
+            --input "source_artifact/${SOURCE_VERIFIED_CSV}" \
+            --output-dir "$OUTPUT_DIR/chunks" \
+            --chunks "$CHUNKS" \
+            --dedupe-key candidate_id
+      - name: Build matrix outputs
+        id: matrix
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          from pathlib import Path
+
+          chunks = int(os.environ["CHUNKS"])
+          summary = json.loads(Path(os.environ["OUTPUT_DIR"], "chunks", "summary.json").read_text())
+          print("matrix=" + json.dumps(list(range(chunks))))
+          print("n_trials=" + str(int(summary["n_trials"])))
+          PY
+      - name: Upload robustness chunks
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-multi-asset-sharpe-positive-8methods-universal-robustness-chunks
+          path: ${{ env.OUTPUT_DIR }}/chunks
+      - name: Upload public panel
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-multi-asset-sharpe-positive-8methods-universal-robustness-public-panel
+          path: data/public/spy_daily.csv
+
+  robustness:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 128
+      matrix:
+        chunk: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    env:
+      N_TRIALS: ${{ needs.prepare.outputs.n_trials }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Install robustness dependency
+        run: python -m pip install "scipy>=1.12"
+      - name: Download chunks
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-multi-asset-sharpe-positive-8methods-universal-robustness-chunks
+          path: chunks
+      - name: Download public panel
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-multi-asset-sharpe-positive-8methods-universal-robustness-public-panel
+          path: data/public
+      - name: Run universal robustness chunk
+        run: |
+          CHUNK=$(printf "%02d" "${{ matrix.chunk }}")
+          python scripts/run_universal_strategy_robustness.py \
+            --input "chunks/chunk_${CHUNK}.csv" \
+            --input-kind weekly-leaderboard \
+            --config "$CONFIG" \
+            --output-dir "$OUTPUT_DIR/chunk_${CHUNK}" \
+            --aurora-root "$GITHUB_WORKSPACE/src/aurora" \
+            --run-id "weekly_multi_asset_sharpe_positive_8methods_universal_robustness_chunk_${CHUNK}" \
+            --n-trials "$N_TRIALS" \
+            --returns-are-net true \
+            --bootstrap-samples "$BOOTSTRAP_SAMPLES" \
+            --bootstrap-seed "$((9200 + ${{ matrix.chunk }}))"
+      - name: Upload robustness chunk
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-multi-asset-sharpe-positive-8methods-universal-robustness-chunk-${{ matrix.chunk }}
+          path: ${{ env.OUTPUT_DIR }}/chunk_*
+
+  merge:
+    needs: robustness
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Download robustness chunks
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ env.OUTPUT_DIR }}/artifacts
+          pattern: weekly-multi-asset-sharpe-positive-8methods-universal-robustness-chunk-*
+          merge-multiple: true
+      - name: Merge universal robustness chunks
+        run: |
+          python scripts/merge_universal_robustness_chunks.py \
+            --input-root "$OUTPUT_DIR/artifacts" \
+            --output-dir "$OUTPUT_DIR/final" \
+            --expected-chunks "$CHUNKS" \
+            --bootstrap-samples "$BOOTSTRAP_SAMPLES"
+      - name: Upload final universal robustness results
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-multi-asset-sharpe-positive-8methods-universal-robustness-results
+          path: ${{ env.OUTPUT_DIR }}/final

@@ -66,6 +66,7 @@ def main() -> int:
         "multiple_testing_pass": _sum_bool(results, "multiple_testing_pass"),
         "cost_pass": _sum_bool(results, "cost_pass"),
         "bootstrap_samples": int(args.bootstrap_samples),
+        "locked_opened": False,
         "methods": _json_safe(methods.to_dict(orient="records")),
     }
     (output / "universal_robustness_summary.json").write_text(

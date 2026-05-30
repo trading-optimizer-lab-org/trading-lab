@@ -1,0 +1,5 @@
+run=weekly-multi-asset-sharpe-positive-8methods-universal-robustness
+source_run_id=26597223090
+source_artifact=weekly-multi-asset-sharpe-positive-8methods-9h-500-leaderboard
+chunks=256
+bootstrap_samples=100
