@@ -1,0 +1,41 @@
+data_path: data/public/spy_daily.csv
+output_dir: outputs/weekly_multi_asset_sharpe_positive_5methods_1h_compare
+start_year: 1994
+end_year: 2026
+train_start: "1994-01-01"
+train_end: "2007-12-31"
+validation_start: "2008-01-01"
+validation_end: "2019-12-31"
+locked_start: "2020-01-01"
+cash_return: 0.0
+max_abs_exposure: 1.0
+max_features: 8
+seed_pool: 5000
+beam_width: 160
+generations: 24
+mutations_per_parent: 36
+top_rows_per_stage: 500
+random_seed: 9301501
+waves: 2
+minutes_per_method_stage: 15
+timeout_minutes_per_job: 20
+methods_per_wave: 5
+stages_per_method: 20
+jobs_per_method_per_wave: 20
+jobs_per_wave: 100
+jobs_per_method_total: 40
+jobs_total: 200
+max_parallel: 100
+state_top: 500
+score_mode: train_sharpe_positive_years_report_validation
+validation_role: report_only
+locked_opened: false
+partial: true
+artifact_name: weekly-multi-asset-sharpe-positive-5methods-1h-compare-leaderboard
+file_prefix: weekly_multi_asset_sharpe_positive_5methods_1h_compare
+methods:
+  - dehb_real
+  - genetic
+  - beam
+  - bandit
+  - github_ml

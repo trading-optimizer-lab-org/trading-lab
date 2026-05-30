@@ -732,6 +732,43 @@ def test_weekly_multi_asset_sharpe_positive_8methods_9h_500_shape() -> None:
     assert "bohb_real" not in config
 
 
+def test_weekly_multi_asset_sharpe_positive_5methods_1h_compare_shape() -> None:
+    text = Path(".github/workflows/weekly-multi-asset-sharpe-positive-5methods-1h-compare.yml").read_text(encoding="utf-8")
+    wave = Path(".github/workflows/weekly-multi-asset-sharpe-positive-5methods-1h-compare-wave.yml").read_text(encoding="utf-8")
+    config = Path("configs/weekly_multi_asset_sharpe_positive_5methods_1h_compare.yaml").read_text(encoding="utf-8")
+
+    assert "name: Weekly Multi Asset Sharpe Positive 5 Methods 1h Compare" in text
+    assert "workflow_dispatch" in text
+    assert "download_public_data.py --feature-panel --output data/public/spy_daily.csv" in text
+    assert "inputs.max_parallel || '100'" in text
+    assert "inputs.minutes_per_method_stage || '15'" in text
+    assert "--expected-jobs 200" in text
+    assert "wave-1:" in text
+    assert "wave-2:" in text
+    assert "weekly-multi-asset-sharpe-positive-5methods-1h-compare-leaderboard" in text
+
+    assert "method: [dehb_real, genetic, beam, bandit, github_ml]" in wave
+    assert "--total-stages 20" in wave
+    assert "timeout-minutes: 20" in wave
+    assert "max-parallel: ${{ inputs.max_parallel }}" in wave
+    assert "smac_mf_real" not in wave
+    assert "optuna_tpe_hyperband" not in wave
+    assert "sobol_random_asha_real" not in wave
+
+    assert "waves: 2" in config
+    assert "jobs_total: 200" in config
+    assert "jobs_per_wave: 100" in config
+    assert "jobs_per_method_total: 40" in config
+    assert "max_parallel: 100" in config
+    assert "minutes_per_method_stage: 15" in config
+    assert "score_mode: train_sharpe_positive_years_report_validation" in config
+    assert "validation_role: report_only" in config
+    assert "locked_opened: false" in config
+    assert "smac_mf_real" not in config
+    assert "optuna_tpe_hyperband" not in config
+    assert "sobol_random_asha_real" not in config
+
+
 def test_ci_is_manual_or_pull_request_only() -> None:
     text = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 
