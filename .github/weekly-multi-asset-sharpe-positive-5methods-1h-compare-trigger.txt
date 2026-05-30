@@ -1,0 +1,1 @@
+﻿trigger weekly-multi-asset-sharpe-positive-5methods-1h-compare 2026-05-30T12:59:24.3585706+02:00
